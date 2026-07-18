@@ -1,0 +1,312 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#160A0C">
+<title>Alert Desk</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,300..800&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --ink:#160A0C; --panel:#241114; --panel2:#2E1519; --line:#47232A;
+    --paper:#F4EAE7; --muted:#C29CA1; --crimson:#D24A4F; --crimson-deep:#A03038;
+    --armed:#63B98A; --fired:#E0A44C; --paused:#8A6E73;
+    --mono:ui-monospace,'Cascadia Code','Segoe UI Mono',Consolas,monospace;
+  }
+  *{box-sizing:border-box;margin:0}
+  body{background:var(--ink);color:var(--paper);
+    font:15px/1.5 'Segoe UI',system-ui,sans-serif;
+    padding:max(14px,env(safe-area-inset-top)) 14px 90px}
+  h1,h2,.brand{font-family:'Bricolage Grotesque',sans-serif}
+  header{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;margin-bottom:14px}
+  .brand{font-size:26px;font-weight:700;letter-spacing:-.02em}
+  .brand em{color:var(--crimson);font-style:normal}
+  #runline{font-size:12.5px;color:var(--muted)}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;
+    padding:14px;margin-bottom:12px}
+  label{display:block;font-size:12px;color:var(--muted);margin:8px 0 3px}
+  input,select{width:100%;background:var(--ink);border:1px solid var(--line);
+    color:var(--paper);border-radius:8px;padding:9px 10px;font:inherit}
+  input:focus,select:focus,button:focus-visible{outline:2px solid var(--crimson);outline-offset:1px}
+  button{font:inherit;border:0;border-radius:9px;padding:10px 16px;cursor:pointer;
+    background:var(--panel2);color:var(--paper);border:1px solid var(--line)}
+  button.primary{background:var(--crimson);border-color:var(--crimson-deep);font-weight:600}
+  button.small{padding:5px 10px;font-size:12.5px;border-radius:7px}
+  button:disabled{opacity:.45;cursor:default}
+  .alert{display:flex;flex-direction:column;gap:8px}
+  .alert .top{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+  .tk{font-family:'Bricolage Grotesque',sans-serif;font-weight:700;font-size:19px}
+  .ex{font-size:11px;color:var(--muted);border:1px solid var(--line);
+    border-radius:5px;padding:1px 6px}
+  .chip{font-size:11px;font-weight:600;letter-spacing:.04em;border-radius:20px;
+    padding:3px 10px;margin-left:auto}
+  .chip.armed{background:#1D3328;color:var(--armed)}
+  .chip.fired{background:#3A2A12;color:var(--fired)}
+  .chip.paused{background:#2C1F22;color:var(--paused)}
+  .trigger{font-family:var(--mono);font-size:14px;color:var(--paper)}
+  .trigger b{color:var(--crimson);font-weight:600}
+  .sub{font-size:12.5px;color:var(--muted)}
+  .row{display:flex;gap:8px}
+  .row>*{flex:1}
+  .actions{display:flex;gap:8px;flex-wrap:wrap}
+  .editgrid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+  #savebar{position:fixed;left:0;right:0;bottom:0;background:linear-gradient(transparent,var(--ink) 30%);
+    padding:18px 14px calc(14px + env(safe-area-inset-bottom));display:none;gap:10px;
+    justify-content:center}
+  #savebar.show{display:flex}
+  #toast{position:fixed;top:12px;left:50%;transform:translateX(-50%);
+    background:var(--panel2);border:1px solid var(--line);border-radius:10px;
+    padding:10px 16px;font-size:14px;display:none;max-width:92vw;z-index:9}
+  .err{color:#F09A9A}
+  details summary{cursor:pointer;color:var(--muted);font-size:13px}
+  a{color:var(--crimson)}
+  @media(min-width:700px){body{max-width:760px;margin:0 auto}}
+  @media(prefers-reduced-motion:no-preference){
+    .card{transition:border-color .15s}
+    .card.dirty{border-color:var(--crimson-deep)}
+  }
+</style>
+</head>
+<body>
+<header>
+  <div class="brand">Alert <em>Desk</em></div>
+  <div id="runline">Not connected</div>
+</header>
+
+<div class="card" id="setup">
+  <h2 style="font-size:17px">Connect to your repo</h2>
+  <p class="sub" style="margin-top:6px">One-time setup. The token stays in this
+    browser only (localStorage) and talks directly to GitHub, nothing in between.</p>
+  <label>GitHub username</label><input id="cfg-owner" placeholder="alekhyadas" autocapitalize="off">
+  <label>Repository</label><input id="cfg-repo" value="stock-alerts" autocapitalize="off">
+  <label>Fine-grained personal access token</label>
+  <input id="cfg-token" type="password" placeholder="github_pat_...">
+  <details style="margin-top:8px"><summary>How to create the token</summary>
+    <p class="sub" style="margin-top:6px">GitHub &gt; Settings &gt; Developer settings &gt;
+    Personal access tokens &gt; Fine-grained tokens &gt; Generate new token.
+    Repository access: Only select repositories, pick stock-alerts.
+    Permissions: Contents = Read and write, Actions = Read-only.
+    Set an expiry you're comfortable with, then paste the token here.</p></details>
+  <div style="margin-top:12px"><button class="primary" onclick="connect()">Connect</button></div>
+  <p id="setup-err" class="sub err"></p>
+</div>
+
+<div id="app" style="display:none">
+  <div id="list"></div>
+  <div class="card">
+    <h2 style="font-size:16px">Add an alert</h2>
+    <div class="editgrid" style="margin-top:8px">
+      <div><label>Ticker</label><input id="n-tk" placeholder="RELIANCE" autocapitalize="characters"></div>
+      <div><label>Exchange</label><select id="n-ex"><option>NSE</option><option>BSE</option><option>US</option></select></div>
+      <div><label>Type</label><select id="n-ty" onchange="refToggle()"><option value="price">price target</option><option value="percent">percent move</option></select></div>
+      <div><label>Direction</label><select id="n-di"><option>above</option><option>below</option></select></div>
+      <div><label id="n-val-label">Target price</label><input id="n-val" inputmode="decimal" placeholder="3200"></div>
+      <div id="n-ref-wrap" style="display:none"><label>Reference price</label><input id="n-ref" inputmode="decimal" placeholder="e.g. your buy price"></div>
+    </div>
+    <div style="margin-top:12px"><button onclick="addAlert()">Add to list</button></div>
+  </div>
+  <div class="card">
+    <h2 style="font-size:16px">Import many alerts at once</h2>
+    <p class="sub" style="margin-top:6px">Paste CSV rows (with or without the header line).
+      They get staged like any other change; press Save to commit.</p>
+    <textarea id="bulk" rows="5" style="width:100%;background:var(--ink);border:1px solid var(--line);color:var(--paper);border-radius:8px;padding:9px 10px;font-family:var(--mono);font-size:12.5px;margin-top:8px" placeholder="VMM,NSE,percent,15,above,110.33,yes&#10;HDBFS,NSE,percent,5,below,732.50,yes"></textarea>
+    <div style="margin-top:10px"><button onclick="bulkImport()">Stage these alerts</button></div>
+  </div>
+  <div class="card sub">
+    Changes are staged locally until you press Save, which commits straight to the
+    repo. The scheduler picks up the new list on its next run (within 30 minutes
+    during market hours). Re-arming a fired alert also takes effect on Save.
+    <div style="margin-top:8px"><a href="#" onclick="forget();return false">Disconnect and forget token</a></div>
+  </div>
+</div>
+
+<div id="savebar"><button class="primary" style="min-width:220px" onclick="saveAll()" id="savebtn">Save changes to repo</button></div>
+<div id="toast"></div>
+
+<script>
+const API='https://api.github.com';
+let cfg={}, alerts=[], state={}, stateSha=null, csvSha=null, dirty=false, rearm=new Set();
+
+const $=id=>document.getElementById(id);
+function toast(msg,bad){const t=$('toast');t.textContent=msg;t.style.display='block';
+  t.style.borderColor=bad?'#8A3A3A':'var(--line)';clearTimeout(t._h);
+  t._h=setTimeout(()=>t.style.display='none',3500)}
+function hdrs(){return{'Authorization':'Bearer '+cfg.token,'Accept':'application/vnd.github+json'}}
+function b64enc(s){return btoa(unescape(encodeURIComponent(s)))}
+function b64dec(s){return decodeURIComponent(escape(atob(s.replace(/\n/g,''))))}
+
+async function gh(path,opts){const r=await fetch(API+path,Object.assign({headers:hdrs()},opts||{}));
+  if(r.status===404)return null;
+  if(!r.ok)throw new Error('GitHub API '+r.status+' on '+path);
+  return r.json()}
+
+function parseCSV(text){
+  const lines=text.split(/\r?\n/).filter(l=>l.trim());
+  const head=lines[0].split(',').map(h=>h.trim().toLowerCase());
+  return lines.slice(1).map(l=>{
+    const c=l.split(','); const o={};
+    head.forEach((h,i)=>o[h]=(c[i]||'').trim());
+    return{ticker:(o.ticker||'').toUpperCase(),exchange:(o.exchange||'').toUpperCase(),
+      alert_type:(o.alert_type||'').toLowerCase(),alert_value:o.alert_value||'',
+      direction:(o.direction||'').toLowerCase(),reference_price:o.reference_price||'',
+      enabled:!/^(no|false|0|off)$/i.test(o.enabled||'yes')};
+  }).filter(a=>a.ticker)}
+
+function toCSV(){
+  const rows=alerts.map(a=>[a.ticker,a.exchange,a.alert_type,a.alert_value,
+    a.direction,a.reference_price,a.enabled?'yes':'no'].join(','));
+  return 'ticker,exchange,alert_type,alert_value,direction,reference_price,enabled\n'+rows.join('\n')+'\n'}
+
+const SUFFIX={NSE:'.NS',BSE:'.BO',US:''};
+function symbol(a){return a.ticker+SUFFIX[a.exchange]}
+function alertKey(a){return symbol(a)+'|'+a.alert_type+'|'+parseFloat(a.alert_value)+'|'+a.direction+'|'+(a.alert_type==='percent'?parseFloat(a.reference_price):'')}
+function firedEntry(a){const k=alertKey(a);return state[k]?{key:k,...state[k]}:null}
+function trigger(a){
+  const v=parseFloat(a.alert_value);
+  if(a.alert_type==='price')return v;
+  const r=parseFloat(a.reference_price);
+  return a.direction==='above'?r*(1+v/100):r*(1-v/100)}
+function cur(a){return a.exchange==='US'?'$':'\u20B9'}
+function fmt(n){return isFinite(n)?n.toLocaleString('en-IN',{minimumFractionDigits:2,maximumFractionDigits:2}):'?'}
+
+function render(){
+  const L=$('list');L.innerHTML='';
+  if(!alerts.length)L.innerHTML='<div class="card sub">No alerts yet. Add your first one below.</div>';
+  alerts.forEach((a,i)=>{
+    const f=firedEntry(a), rearming=f&&rearm.has(f.key);
+    const status=!a.enabled?'paused':(f&&!rearming?'fired':'armed');
+    const card=document.createElement('div');card.className='card alert'+(dirty?' dirty':'');
+    const t=trigger(a);
+    card.innerHTML=`
+      <div class="top">
+        <span class="tk">${a.ticker}</span><span class="ex">${a.exchange}</span>
+        <span class="chip ${status}">${status==='fired'?'FIRED':status.toUpperCase()}</span>
+      </div>
+      <div class="trigger">${a.alert_type==='percent'
+        ?`${fmt(parseFloat(a.reference_price))} ${a.direction==='above'?'+':'\u2212'}${a.alert_value}% \u2192 <b>${a.direction} ${cur(a)}${fmt(t)}</b>`
+        :`<b>${a.direction} ${cur(a)}${fmt(t)}</b>`}</div>
+      ${f&&!rearming?`<div class="sub">Fired ${new Date(f.fired_at_utc).toLocaleString('en-IN',{dateStyle:'medium',timeStyle:'short'})} at ${cur(a)}${fmt(f.fired_price)}</div>`:''}
+      ${rearming?`<div class="sub">Will re-arm on Save</div>`:''}
+      <div class="actions">
+        ${f&&!rearming?`<button class="small" onclick="doRearm(${i})">Re-arm</button>`:''}
+        <button class="small" onclick="togglePause(${i})">${a.enabled?'Pause':'Resume'}</button>
+        <button class="small" onclick="editAlert(${i})">Edit</button>
+        <button class="small" onclick="delAlert(${i})">Delete</button>
+      </div>`;
+    L.appendChild(card)});
+  $('savebar').classList.toggle('show',dirty)}
+
+function markDirty(){dirty=true;render()}
+function togglePause(i){alerts[i].enabled=!alerts[i].enabled;markDirty()}
+function delAlert(i){if(confirm('Delete the '+alerts[i].ticker+' alert?')){alerts.splice(i,1);markDirty()}}
+function doRearm(i){const f=firedEntry(alerts[i]);if(f){rearm.add(f.key);markDirty()}}
+function editAlert(i){
+  const a=alerts[i];
+  const v=prompt('Alert value for '+a.ticker+' ('+(a.alert_type==='percent'?'% move':'target price')+'):',a.alert_value);
+  if(v===null)return; if(isNaN(parseFloat(v))){toast('Not a number',true);return}
+  a.alert_value=v;
+  if(a.alert_type==='percent'){
+    const r=prompt('Reference price:',a.reference_price);
+    if(r===null)return; if(isNaN(parseFloat(r))){toast('Not a number',true);return}
+    a.reference_price=r}
+  const d=prompt('Direction (above/below):',a.direction);
+  if(d&&/^(above|below)$/i.test(d.trim()))a.direction=d.trim().toLowerCase();
+  markDirty()}
+
+function refToggle(){const p=$('n-ty').value==='percent';
+  $('n-ref-wrap').style.display=p?'':'none';
+  $('n-val-label').textContent=p?'Percent move (e.g. 5 for 5%)':'Target price'}
+function addAlert(){
+  const a={ticker:$('n-tk').value.trim().toUpperCase(),exchange:$('n-ex').value,
+    alert_type:$('n-ty').value,alert_value:$('n-val').value.trim(),
+    direction:$('n-di').value,reference_price:$('n-ref').value.trim(),enabled:true};
+  if(!a.ticker){toast('Ticker is required',true);return}
+  if(isNaN(parseFloat(a.alert_value))){toast('Alert value must be a number',true);return}
+  if(a.alert_type==='percent'&&isNaN(parseFloat(a.reference_price))){toast('Percent alerts need a reference price',true);return}
+  if(a.alert_type==='price')a.reference_price='';
+  alerts.push(a);$('n-tk').value='';$('n-val').value='';$('n-ref').value='';
+  markDirty();toast(a.ticker+' staged, press Save to commit')}
+
+async function loadAll(){
+  const own=cfg.owner,rep=cfg.repo;
+  const csv=await gh(`/repos/${own}/${rep}/contents/holdings.csv`);
+  if(!csv)throw new Error('holdings.csv not found in the repo');
+  csvSha=csv.sha; alerts=parseCSV(b64dec(csv.content));
+  const st=await gh(`/repos/${own}/${rep}/contents/alerts_state.json`);
+  if(st){stateSha=st.sha;state=JSON.parse(b64dec(st.content)||'{}')}else{stateSha=null;state={}}
+  try{
+    const runs=await gh(`/repos/${own}/${rep}/actions/runs?per_page=1`);
+    if(runs&&runs.workflow_runs&&runs.workflow_runs.length){
+      const r=runs.workflow_runs[0];
+      const when=new Date(r.updated_at).toLocaleString('en-IN',{dateStyle:'medium',timeStyle:'short'});
+      $('runline').innerHTML=`Last check: ${when} \u00B7 ${r.conclusion==='success'?'ok':(r.status==='in_progress'?'running':'<span class="err">'+(r.conclusion||r.status)+'</span>')}`}
+  }catch(e){$('runline').textContent='Last check: unknown'}
+  dirty=false;rearm.clear();render()}
+
+async function saveAll(){
+  $('savebtn').disabled=true;
+  try{
+    const body={message:'Update alerts via dashboard',content:b64enc(toCSV()),sha:csvSha};
+    const res=await gh(`/repos/${cfg.owner}/${cfg.repo}/contents/holdings.csv`,
+      {method:'PUT',body:JSON.stringify(body)});
+    csvSha=res.content.sha;
+    if(rearm.size){
+      rearm.forEach(k=>delete state[k]);
+      const sbody={message:'Re-arm alerts via dashboard',
+        content:b64enc(JSON.stringify(state,null,2)+'\n')};
+      if(stateSha)sbody.sha=stateSha;
+      const sres=await gh(`/repos/${cfg.owner}/${cfg.repo}/contents/alerts_state.json`,
+        {method:'PUT',body:JSON.stringify(sbody)});
+      stateSha=sres.content.sha;rearm.clear()}
+    dirty=false;render();toast('Saved. Live from the next scheduled check.')
+  }catch(e){toast('Save failed: '+e.message+'. Reloading latest.',true);
+    try{await loadAll()}catch(_){}}
+  $('savebtn').disabled=false}
+
+async function connect(){
+  cfg={owner:$('cfg-owner').value.trim(),repo:$('cfg-repo').value.trim(),
+    token:$('cfg-token').value.trim()};
+  if(!cfg.owner||!cfg.repo||!cfg.token){$('setup-err').textContent='All three fields are required.';return}
+  try{await loadAll();
+    localStorage.setItem('alertdesk',JSON.stringify(cfg));
+    $('setup').style.display='none';$('app').style.display='';}
+  catch(e){$('setup-err').textContent=e.message+
+    '. Check the username, repo name, and that the token has Contents read-write on this repo.'}}
+
+function bulkImport(){
+  const raw=$('bulk').value.trim();
+  if(!raw){toast('Paste some rows first',true);return}
+  let added=0, skipped=[];
+  raw.split(/\r?\n/).forEach((line,idx)=>{
+    line=line.trim();
+    if(!line)return;
+    if(/^ticker\s*,/i.test(line))return; // header line, ignore
+    const c=line.split(',').map(x=>x.trim());
+    const a={ticker:(c[0]||'').toUpperCase(),exchange:(c[1]||'').toUpperCase(),
+      alert_type:(c[2]||'').toLowerCase(),alert_value:c[3]||'',
+      direction:(c[4]||'').toLowerCase(),reference_price:c[5]||'',
+      enabled:!/^(no|false|0|off)$/i.test(c[6]||'yes')};
+    if(!a.ticker||!SUFFIX.hasOwnProperty(a.exchange)||
+       !['price','percent'].includes(a.alert_type)||
+       !['above','below'].includes(a.direction)||
+       isNaN(parseFloat(a.alert_value))||
+       (a.alert_type==='percent'&&isNaN(parseFloat(a.reference_price)))){
+      skipped.push('line '+(idx+1));return}
+    if(a.alert_type==='price')a.reference_price='';
+    alerts.push(a);added++});
+  if(added){$('bulk').value='';markDirty()}
+  toast(added+' alert(s) staged'+(skipped.length?', skipped: '+skipped.join(', '):'')+
+    (added?'. Press Save to commit.':''),!added)}
+
+function forget(){localStorage.removeItem('alertdesk');location.reload()}
+
+(function init(){
+  const saved=localStorage.getItem('alertdesk');
+  if(saved){cfg=JSON.parse(saved);
+    $('cfg-owner').value=cfg.owner;$('cfg-repo').value=cfg.repo;$('cfg-token').value=cfg.token;
+    connect()}
+})();
+</script>
+</body>
+</html>
