@@ -95,6 +95,16 @@
 <div id="app" style="display:none">
   <div id="list"></div>
   <div class="card">
+    <h2 style="font-size:16px">Smart add</h2>
+    <p class="sub" style="margin-top:6px">Type it in plain words, e.g. "RELIANCE 5% up from 1000"
+      or "TCS above 3500". Use the ticker symbol, not the full company name.
+      This fills the form below for you to check before adding &mdash; it's
+      pattern matching, not AI, so always review what it understood.</p>
+    <input id="smart-in" style="margin-top:8px" placeholder="e.g. HDBFS 5% down from 732.50">
+    <div style="margin-top:10px"><button onclick="smartParse()">Understand</button></div>
+    <p id="smart-msg" class="sub" style="margin-top:6px"></p>
+  </div>
+  <div class="card">
     <h2 style="font-size:16px">Add an alert</h2>
     <div class="editgrid" style="margin-top:8px">
       <div><label>Ticker</label><input id="n-tk" placeholder="RELIANCE" autocapitalize="characters"></div>
@@ -213,6 +223,73 @@ function editAlert(i){
   const d=prompt('Direction (above/below):',a.direction);
   if(d&&/^(above|below)$/i.test(d.trim()))a.direction=d.trim().toLowerCase();
   markDirty()}
+
+const STOPWORDS=new Set(['alert','alerts','me','when','if','becomes','become','is','are',
+  'hits','hit','reaches','reach','notify','that','and','it','does','do','please','want',
+  'wants','give','set','create','add','an','a','to','for','crosses','cross','crossing',
+  'goes','go','rises','rise','rising','falls','fall','falling','gain','gains','gaining',
+  'drop','drops','dropping','higher','lower','over','under','than','current','currently',
+  'now','today','price','target','buy','my','the','of','from','up','down','above','below',
+  'percent','pct','stock','share','shares','on','at','with','value','moves','move','moved',
+  'nse','bse','us','usa','nasdaq','nyse','get','let','know','pls','plz']);
+
+function smartParse(){
+  const raw=$('smart-in').value.trim();
+  const msg=$('smart-msg');
+  if(!raw){msg.textContent='Type something first.';msg.className='sub err';return}
+  const lower=' '+raw.toLowerCase()+' ';
+
+  // Direction: whichever keyword appears first in the sentence
+  const upIdx=lower.search(/\b(up|above|over|higher|rise|rises|rising|gain|gains|gaining)\b/);
+  const downIdx=lower.search(/\b(down|below|under|lower|fall|falls|falling|drop|drops|dropping)\b/);
+  let direction=null;
+  if(upIdx>=0&&(downIdx<0||upIdx<downIdx))direction='above';
+  else if(downIdx>=0)direction='below';
+
+  // Percent, e.g. "5%" or "5 %"
+  const pctMatch=lower.match(/(\d+(?:\.\d+)?)\s*%/);
+  let type='price', value=null;
+  let rest=lower;
+  if(pctMatch){type='percent';value=pctMatch[1];rest=lower.replace(pctMatch[0],' ')}
+
+  // Remaining numbers (currency symbols/commas stripped)
+  const numMatches=[...rest.matchAll(/[₹$]?\s*([\d,]+(?:\.\d+)?)/g)]
+    .map(m=>m[1].replace(/,/g,''))
+    .filter(n=>n && !isNaN(parseFloat(n)));
+
+  let reference='';
+  if(type==='percent'){
+    reference=numMatches[0]||'';
+  }else{
+    value=numMatches[0]||'';
+  }
+
+  // Ticker: first non-stopword alphabetic token in the ORIGINAL text
+  const tokens=raw.split(/[^a-zA-Z]+/).filter(Boolean);
+  const ticker=tokens.find(t=>t.length>=2&&t.length<=15&&!STOPWORDS.has(t.toLowerCase()));
+
+  // Exchange: explicit mention, else default NSE
+  let exchange='NSE';
+  if(/\b(nasdaq|nyse|\bus\b|usa)\b/i.test(raw))exchange='US';
+  else if(/\bbse\b/i.test(raw))exchange='BSE';
+  else if(/\bnse\b/i.test(raw))exchange='NSE';
+
+  if(!ticker){msg.textContent="Couldn't find a ticker symbol. Try including it plainly, e.g. \"RELIANCE 5% up from 1000\".";msg.className='sub err';return}
+  if(!value){msg.textContent="Couldn't find a number to use as the target"+(type==='percent'?' or reference':'')+". Try rephrasing with a clear number.";msg.className='sub err';return}
+  if(type==='percent'&&!reference){msg.textContent='Found the percent move but not a reference price. Try adding "from <price>".';msg.className='sub err';return}
+  if(!direction){msg.textContent="Couldn't tell if this is an upward or downward move — add \"above\"/\"up\" or \"below\"/\"down\".";msg.className='sub err';return}
+
+  $('n-tk').value=ticker.toUpperCase();
+  $('n-ex').value=exchange;
+  $('n-ty').value=type; refToggle();
+  $('n-di').value=direction;
+  $('n-val').value=value;
+  if(type==='percent')$('n-ref').value=reference;
+  msg.textContent='Filled in below as: '+ticker.toUpperCase()+' ('+exchange+') '+direction+' '+
+    (type==='percent'?value+'% from '+reference:'target '+value)+
+    ' — review and click "Add to list" if correct.';
+  msg.className='sub';
+  $('n-tk').scrollIntoView({behavior:'smooth',block:'center'})}
 
 function refToggle(){const p=$('n-ty').value==='percent';
   $('n-ref-wrap').style.display=p?'':'none';
