@@ -93,6 +93,7 @@
 </div>
 
 <div id="app" style="display:none">
+  <div id="digestcard"></div>
   <div id="list"></div>
   <div class="card">
     <h2 style="font-size:16px">Smart add</h2>
@@ -136,7 +137,7 @@
 
 <script>
 const API='https://api.github.com';
-let cfg={}, alerts=[], state={}, stateSha=null, csvSha=null, dirty=false, rearm=new Set();
+let cfg={}, alerts=[], state={}, stateSha=null, csvSha=null, dirty=false, rearm=new Set(), ack=new Set();
 
 const $=id=>document.getElementById(id);
 function toast(msg,bad){const t=$('toast');t.textContent=msg;t.style.display='block';
@@ -198,7 +199,10 @@ function render(){
         :`<b>${a.direction} ${cur(a)}${fmt(t)}</b>`}</div>
       ${f&&!rearming?`<div class="sub">Fired ${new Date(f.fired_at_utc).toLocaleString('en-IN',{dateStyle:'medium',timeStyle:'short'})} at ${cur(a)}${fmt(f.fired_price)}</div>`:''}
       ${rearming?`<div class="sub">Will re-arm on Save</div>`:''}
+      ${f&&!rearming&&!f.acked&&!ack.has(f.key)?`<div class="sub" style="color:var(--fired)">Reminder ${f.sends||1} of 3 sent, not acknowledged</div>`:''}
+      ${f&&ack.has(f.key)?`<div class="sub">Will acknowledge on Save</div>`:''}
       <div class="actions">
+        ${f&&!rearming&&!f.acked&&!ack.has(f.key)?`<button class="small" onclick="doAck(${i})">Acknowledge</button>`:''}
         ${f&&!rearming?`<button class="small" onclick="doRearm(${i})">Re-arm</button>`:''}
         <button class="small" onclick="togglePause(${i})">${a.enabled?'Pause':'Resume'}</button>
         <button class="small" onclick="editAlert(${i})">Edit</button>
@@ -210,7 +214,8 @@ function render(){
 function markDirty(){dirty=true;render()}
 function togglePause(i){alerts[i].enabled=!alerts[i].enabled;markDirty()}
 function delAlert(i){if(confirm('Delete the '+alerts[i].ticker+' alert?')){alerts.splice(i,1);markDirty()}}
-function doRearm(i){const f=firedEntry(alerts[i]);if(f){rearm.add(f.key);markDirty()}}
+function doRearm(i){const f=firedEntry(alerts[i]);if(f){rearm.add(f.key);ack.delete(f.key);markDirty()}}
+function doAck(i){const f=firedEntry(alerts[i]);if(f){ack.add(f.key);markDirty()}}
 function editAlert(i){
   const a=alerts[i];
   const v=prompt('Alert value for '+a.ticker+' ('+(a.alert_type==='percent'?'% move':'target price')+'):',a.alert_value);
@@ -313,13 +318,17 @@ async function loadAll(){
   const st=await gh(`/repos/${own}/${rep}/contents/alerts_state.json`);
   if(st){stateSha=st.sha;state=JSON.parse(b64dec(st.content)||'{}')}else{stateSha=null;state={}}
   try{
+    const dg=await gh(`/repos/${own}/${rep}/contents/digest.json`);
+    renderDigest(dg?JSON.parse(b64dec(dg.content)):null)
+  }catch(e){renderDigest(null)}
+  try{
     const runs=await gh(`/repos/${own}/${rep}/actions/runs?per_page=1`);
     if(runs&&runs.workflow_runs&&runs.workflow_runs.length){
       const r=runs.workflow_runs[0];
       const when=new Date(r.updated_at).toLocaleString('en-IN',{dateStyle:'medium',timeStyle:'short'});
       $('runline').innerHTML=`Last check: ${when} \u00B7 ${r.conclusion==='success'?'ok':(r.status==='in_progress'?'running':'<span class="err">'+(r.conclusion||r.status)+'</span>')}`}
   }catch(e){$('runline').textContent='Last check: unknown'}
-  dirty=false;rearm.clear();render()}
+  dirty=false;rearm.clear();ack.clear();render()}
 
 async function saveAll(){
   $('savebtn').disabled=true;
@@ -328,14 +337,16 @@ async function saveAll(){
     const res=await gh(`/repos/${cfg.owner}/${cfg.repo}/contents/holdings.csv`,
       {method:'PUT',body:JSON.stringify(body)});
     csvSha=res.content.sha;
-    if(rearm.size){
+    if(rearm.size||ack.size){
       rearm.forEach(k=>delete state[k]);
-      const sbody={message:'Re-arm alerts via dashboard',
+      ack.forEach(k=>{if(state[k]){state[k].acked=true;
+        state[k].acked_at_utc=new Date().toISOString().replace(/\.\d+Z$/,'+00:00')}});
+      const sbody={message:'Acknowledge / re-arm alerts via dashboard',
         content:b64enc(JSON.stringify(state,null,2)+'\n')};
       if(stateSha)sbody.sha=stateSha;
       const sres=await gh(`/repos/${cfg.owner}/${cfg.repo}/contents/alerts_state.json`,
         {method:'PUT',body:JSON.stringify(sbody)});
-      stateSha=sres.content.sha;rearm.clear()}
+      stateSha=sres.content.sha;rearm.clear();ack.clear()}
     dirty=false;render();toast('Saved. Live from the next scheduled check.')
   }catch(e){toast('Save failed: '+e.message+'. Reloading latest.',true);
     try{await loadAll()}catch(_){}}
@@ -375,6 +386,30 @@ function bulkImport(){
   if(added){$('bulk').value='';markDirty()}
   toast(added+' alert(s) staged'+(skipped.length?', skipped: '+skipped.join(', '):'')+
     (added?'. Press Save to commit.':''),!added)}
+
+function renderDigest(d){
+  const box=$('digestcard');
+  if(!d||!d.entries||!d.entries.length){box.innerHTML='';return}
+  let rows='';
+  d.entries.forEach(e=>{
+    if(!e.price){rows+=`<div style="margin-bottom:10px"><span class="tk" style="font-size:15px">${e.ticker}</span> <span class="sub err">price unavailable</span></div>`;return}
+    const day=e.day_pct!=null?` <span style="color:${e.day_pct>=0?'var(--armed)':'var(--crimson)'}">${e.day_pct>=0?'+':''}${e.day_pct}%</span>`:'';
+    let bands=e.bands.map(b=>
+      `<span class="sub">${b.direction} ${e.currency}${fmt(b.target)} (${b.away_pct>=0?'+':''}${b.away_pct}%)${b.status==='fired'?' \u00B7 fired':''}</span>`
+    ).join(' \u00B7 ');
+    let extra=[];
+    if(e.off_high_pct!=null)extra.push(`${e.off_high_pct}% vs 52w high`);
+    if(e.mean_target)extra.push(`target ${e.currency}${fmt(e.mean_target)}`);
+    if(e.earnings)extra.push(`earnings ${e.earnings}`);
+    rows+=`<div style="margin-bottom:10px">
+      <span class="tk" style="font-size:15px">${e.ticker}</span>
+      <span class="trigger" style="font-size:13px">${e.currency}${fmt(e.price)}</span>${day}<br>
+      ${bands}${extra.length?`<br><span class="sub">${extra.join(' \u00B7 ')}</span>`:''}
+    </div>`});
+  box.innerHTML=`<div class="card">
+    <h2 style="font-size:16px">Daily digest \u00B7 <span class="sub">${d.date}</span></h2>
+    <div style="margin-top:10px">${rows}</div>
+  </div>`}
 
 function forget(){localStorage.removeItem('alertdesk');location.reload()}
 
