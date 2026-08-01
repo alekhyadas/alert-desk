@@ -51,6 +51,18 @@
   .row>*{flex:1}
   .actions{display:flex;gap:8px;flex-wrap:wrap}
   .editgrid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+  .tab{font-size:12.5px;padding:6px 12px;border-radius:20px;border:1px solid var(--line);
+    background:var(--panel);color:var(--muted);cursor:pointer}
+  .tab.on{background:var(--crimson);border-color:var(--crimson-deep);color:#fff;font-weight:600}
+  .wrow{display:flex;align-items:center;gap:10px;padding:8px 12px;
+    border-bottom:1px solid var(--line)}
+  .wrow:last-child{border-bottom:0}
+  .wrow .tkn{font-family:'Bricolage Grotesque',sans-serif;font-weight:700;font-size:14px;
+    min-width:104px}
+  .wrow .meta{font-size:11.5px;color:var(--muted);flex:1}
+  .wrow .cost{font-family:var(--mono);font-size:12.5px;color:var(--paper)}
+  .grouphdr{font-family:'Bricolage Grotesque',sans-serif;font-size:13px;font-weight:600;
+    color:var(--crimson);padding:10px 12px 4px;letter-spacing:.02em}
   #savebar{position:fixed;left:0;right:0;bottom:0;background:linear-gradient(transparent,var(--ink) 30%);
     padding:18px 14px calc(14px + env(safe-area-inset-bottom));display:none;gap:10px;
     justify-content:center}
@@ -94,6 +106,8 @@
 
 <div id="app" style="display:none">
   <div id="digestcard"></div>
+  <div id="summary" class="card" style="padding:12px 14px"></div>
+  <div id="tabs" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px"></div>
   <div id="list"></div>
   <div class="card">
     <h2 style="font-size:16px">Smart add</h2>
@@ -208,40 +222,103 @@ function trigger(a){
   const r=isFinite(parseFloat(a.reference_price))?parseFloat(a.reference_price):parseFloat(a.avg_cost);
   return a.direction==='above'?r*(1+v/100):r*(1-v/100)}
 function cur(a){return a.exchange==='US'?'$':'\u20B9'}
-function fmt(n){return isFinite(n)?n.toLocaleString('en-IN',{minimumFractionDigits:2,maximumFractionDigits:2}):'?'}
+function fmt(n){return (n!==null&&n!==undefined&&isFinite(n))?n.toLocaleString('en-IN',{minimumFractionDigits:2,maximumFractionDigits:2}):'?'}
+
+let tab = 'alerts';
+let tabInit = false;
+function setTab(t){tab=t;render()}
+
+function accountsOf(list){
+  return [...new Set(list.map(a=>a.account||'Unassigned'))].sort()}
 
 function render(){
-  const L=$('list');L.innerHTML='';
-  if(!alerts.length)L.innerHTML='<div class="card sub">No alerts yet. Add your first one below.</div>';
-  alerts.forEach((a,i)=>{
-    const f=firedEntry(a), rearming=f&&rearm.has(f.key);
-    const status=!a.enabled?'paused':(f&&!rearming?'fired':'armed');
-    const card=document.createElement('div');card.className='card alert'+(dirty?' dirty':'');
-    const t=trigger(a);
-    card.innerHTML=`
-      <div class="top">
-        <span class="tk">${a.ticker}</span><span class="ex">${a.exchange}</span>
-        <span class="chip ${a.alert_type==='watch'?'paused':status}">${a.alert_type==='watch'?'WATCH':(status==='fired'?'FIRED':status.toUpperCase())}</span>
-      </div>
-      ${(a.account||a.broker)?`<div class="sub" style="margin-top:2px">Held in: <span style="color:var(--paper)">${[a.account,a.broker].filter(Boolean).join(' / ')}</span></div>`:''}
-      ${a.avg_cost?`<div class="sub" style="margin-top:2px">Cost ${cur(a)}${fmt(parseFloat(a.avg_cost))}${a.qty?` \u00B7 ${a.qty} shares`:''}${(a.alert_type==='percent'&&!a.reference_price)?' \u00B7 target measured from cost':''}</div>`:''}
-      <div class="trigger">${a.alert_type==='percent'
-        ?`${fmt(parseFloat(a.reference_price))} ${a.direction==='above'?'+':'\u2212'}${a.alert_value}% \u2192 <b>${a.direction} ${cur(a)}${fmt(t)}</b>`
-        :`<b>${a.direction} ${cur(a)}${fmt(t)}</b>`}</div>
-      ${f&&!rearming?`<div class="sub">Fired ${new Date(f.fired_at_utc).toLocaleString('en-IN',{dateStyle:'medium',timeStyle:'short'})} at ${cur(a)}${fmt(f.fired_price)}</div>`:''}
-      ${rearming?`<div class="sub">Will re-arm on Save</div>`:''}
-      ${f&&!rearming&&!f.acked&&!ack.has(f.key)?`<div class="sub" style="color:var(--fired)">Reminder ${f.sends||1} of 3 sent, not acknowledged</div>`:''}
-      ${f&&ack.has(f.key)?`<div class="sub">Will acknowledge on Save</div>`:''}
-      ${a.note?`<div class="sub" style="margin-top:4px;font-style:italic">\u201C${a.note.replace(/</g,'&lt;')}\u201D</div>`:''}
-      <div class="actions">
-        ${f&&!rearming&&!f.acked&&!ack.has(f.key)?`<button class="small" onclick="doAck(${i})">Acknowledge</button>`:''}
-        ${f&&!rearming?`<button class="small" onclick="doRearm(${i})">Re-arm</button>`:''}
-        <button class="small" onclick="togglePause(${i})">${a.enabled?'Pause':'Resume'}</button>
+  const L=$('list'); L.innerHTML='';
+  const isWatch=a=>a.alert_type==='watch';
+  const alertsOnly=alerts.filter(a=>!isWatch(a));
+  const watchOnly=alerts.filter(isWatch);
+  if(!tabInit&&alerts.length){tabInit=true;
+    if(!alertsOnly.length&&watchOnly.length)tab='watch'}
+
+  // summary strip
+  const val=watchOnly.concat(alertsOnly).reduce((s,a)=>{
+    const c=parseFloat(a.avg_cost),q=parseFloat(a.qty);
+    return s+((isFinite(c)&&isFinite(q))?c*q:0)},0);
+  $('summary').innerHTML=
+    `<div style="display:flex;gap:18px;flex-wrap:wrap;align-items:baseline">
+      <div><b style="font-size:18px">${alerts.length}</b> <span class="sub">rows</span></div>
+      <div><b style="font-size:18px">${alertsOnly.length}</b> <span class="sub">alerts</span></div>
+      <div><b style="font-size:18px">${watchOnly.length}</b> <span class="sub">watch only</span></div>
+      <div><b style="font-size:18px">${accountsOf(alerts).length}</b> <span class="sub">accounts</span></div>
+      ${val?`<div class="sub">invested \u20B9${val.toLocaleString('en-IN',{maximumFractionDigits:0})}</div>`:''}
+    </div>`;
+
+  // tabs
+  const tabs=[['alerts','Alerts ('+alertsOnly.length+')'],
+              ['watch','Watch ('+watchOnly.length+')'],
+              ['all','All']]
+    .concat(accountsOf(alerts).map(x=>['acct:'+x,x]));
+  $('tabs').innerHTML=tabs.map(([k,lab])=>
+    `<div class="tab${tab===k?' on':''}" onclick="setTab('${k.replace(/'/g,"\\'")}')">${lab}</div>`).join('');
+
+  let show=alerts.map((a,i)=>({a,i}));
+  if(tab==='alerts')show=show.filter(x=>!isWatch(x.a));
+  else if(tab==='watch')show=show.filter(x=>isWatch(x.a));
+  else if(tab.startsWith('acct:'))show=show.filter(x=>(x.a.account||'Unassigned')===tab.slice(5));
+
+  if(!show.length){L.innerHTML='<div class="card sub">Nothing here yet.</div>';
+    $('savebar').classList.toggle('show',dirty);return}
+
+  // watch rows are compact and grouped; alert rows keep full cards
+  const wr=show.filter(x=>isWatch(x.a)), ar=show.filter(x=>!isWatch(x.a));
+
+  ar.forEach(({a,i})=>L.appendChild(alertCard(a,i)));
+
+  if(wr.length){
+    const box=document.createElement('div'); box.className='card'; box.style.padding='0';
+    let html='',lastAcct=null;
+    wr.forEach(({a,i})=>{
+      const acct=[a.account,a.broker].filter(Boolean).join(' / ')||'Unassigned';
+      if(acct!==lastAcct){html+=`<div class="grouphdr">${acct}</div>`;lastAcct=acct}
+      const c=parseFloat(a.avg_cost),q=parseFloat(a.qty);
+      html+=`<div class="wrow">
+        <span class="tkn">${a.ticker}</span>
+        <span class="cost">${isFinite(c)?'\u20B9'+fmt(c):''}${isFinite(q)?' \u00D7'+q:''}</span>
+        <span class="meta">${a.note?a.note.replace(/</g,'&lt;'):''}</span>
         <button class="small" onclick="editAlert(${i})">Edit</button>
         <button class="small" onclick="delAlert(${i})">Delete</button>
-      </div>`;
-    L.appendChild(card)});
+      </div>`});
+    box.innerHTML=html; L.appendChild(box)}
+
   $('savebar').classList.toggle('show',dirty)}
+
+function alertCard(a,i){
+  const f=firedEntry(a), rearming=f&&rearm.has(f.key);
+  const status=!a.enabled?'paused':(f&&!rearming?'fired':'armed');
+  const card=document.createElement('div');card.className='card alert'+(dirty?' dirty':'');
+  const t=trigger(a);
+  card.innerHTML=`
+    <div class="top">
+      <span class="tk">${a.ticker}</span><span class="ex">${a.exchange}</span>
+      <span class="chip ${status}">${status.toUpperCase()}</span>
+    </div>
+    ${(a.account||a.broker)?`<div class="sub" style="margin-top:2px">Held in: <span style="color:var(--paper)">${[a.account,a.broker].filter(Boolean).join(' / ')}</span></div>`:''}
+    ${a.avg_cost?`<div class="sub" style="margin-top:2px">Cost ${cur(a)}${fmt(parseFloat(a.avg_cost))}${a.qty?` \u00B7 ${a.qty} shares`:''}${(a.alert_type==='percent'&&!a.reference_price)?' \u00B7 target measured from cost':''}</div>`:''}
+    <div class="trigger">${a.alert_type==='percent'
+      ?`${fmt(parseFloat(a.reference_price||a.avg_cost))} ${a.direction==='above'?'+':'\u2212'}${a.alert_value}% \u2192 <b>${a.direction} ${cur(a)}${fmt(t)}</b>`
+      :`<b>${a.direction} ${cur(a)}${fmt(t)}</b>`}</div>
+    ${f&&!rearming?`<div class="sub">Fired ${new Date(f.fired_at_utc).toLocaleString('en-IN',{dateStyle:'medium',timeStyle:'short'})} at ${cur(a)}${fmt(f.fired_price)}</div>`:''}
+    ${rearming?`<div class="sub">Will re-arm on Save</div>`:''}
+    ${f&&!rearming&&!f.acked&&!ack.has(f.key)?`<div class="sub" style="color:var(--fired)">Reminder ${f.sends||1} of 3 sent, not acknowledged</div>`:''}
+    ${f&&ack.has(f.key)?`<div class="sub">Will acknowledge on Save</div>`:''}
+    ${a.note?`<div class="sub" style="margin-top:4px;font-style:italic">\u201C${a.note.replace(/</g,'&lt;')}\u201D</div>`:''}
+    <div class="actions">
+      ${f&&!rearming&&!f.acked&&!ack.has(f.key)?`<button class="small" onclick="doAck(${i})">Acknowledge</button>`:''}
+      ${f&&!rearming?`<button class="small" onclick="doRearm(${i})">Re-arm</button>`:''}
+      <button class="small" onclick="togglePause(${i})">${a.enabled?'Pause':'Resume'}</button>
+      <button class="small" onclick="editAlert(${i})">Edit</button>
+      <button class="small" onclick="delAlert(${i})">Delete</button>
+    </div>`;
+  return card}
 
 function markDirty(){dirty=true;render()}
 function togglePause(i){alerts[i].enabled=!alerts[i].enabled;markDirty()}
