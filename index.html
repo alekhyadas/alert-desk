@@ -110,7 +110,7 @@
     <div class="editgrid" style="margin-top:8px">
       <div><label>Ticker</label><input id="n-tk" placeholder="RELIANCE" autocapitalize="characters"></div>
       <div><label>Exchange</label><select id="n-ex"><option>NSE</option><option>BSE</option><option>US</option></select></div>
-      <div><label>Type</label><select id="n-ty" onchange="refToggle()"><option value="price">price target</option><option value="percent">percent move</option></select></div>
+      <div><label>Type</label><select id="n-ty" onchange="refToggle()"><option value="price">price target</option><option value="percent">percent move</option><option value="watch">watch only (digest, no alerts)</option></select></div>
       <div><label>Direction</label><select id="n-di"><option>above</option><option>below</option></select></div>
       <div><label id="n-val-label">Target price</label><input id="n-val" inputmode="decimal" placeholder="3200"></div>
       <div id="n-ref-wrap" style="display:none"><label>Reference price</label><input id="n-ref" inputmode="decimal" placeholder="e.g. your buy price"></div>
@@ -118,6 +118,7 @@
       <div><label>Broker</label><input id="n-brk" placeholder="e.g. Groww, Zerodha"></div>
       <div><label>Avg cost (optional)</label><input id="n-cost" inputmode="decimal" placeholder="your buy price"></div>
       <div><label>Quantity (optional)</label><input id="n-qty" inputmode="decimal" placeholder="shares held"></div>
+      <div><label>Buy date (optional, for tax)</label><input id="n-bdate" placeholder="YYYY-MM-DD"></div>
       <div style="grid-column:1/-1"><label>Why you set this / your exit plan (optional)</label>
         <input id="n-note" placeholder="e.g. trim half at breakeven, full exit if Q2 margins slip"></div>
     </div>
@@ -185,15 +186,15 @@ function parseCSV(text){
       direction:(o.direction||'').toLowerCase(),reference_price:o.reference_price||'',
       enabled:!/^(no|false|0|off)$/i.test(o.enabled||'yes'),
       account:o.account||'',broker:o.broker||'',
-      avg_cost:o.avg_cost||'',qty:o.qty||'',note:o.note||''};
+      avg_cost:o.avg_cost||'',qty:o.qty||'',note:o.note||'',buy_date:o.buy_date||''};
   }).filter(a=>a.ticker)}
 
 function toCSV(){
   const rows=alerts.map(a=>[a.ticker,a.exchange,a.alert_type,a.alert_value,
     a.direction,a.reference_price,a.enabled?'yes':'no',
     csvSafe(a.account),csvSafe(a.broker),a.avg_cost||'',a.qty||'',
-    csvSafe(a.note)].join(','));
-  return 'ticker,exchange,alert_type,alert_value,direction,reference_price,enabled,account,broker,avg_cost,qty,note\n'+rows.join('\n')+'\n'}
+    csvSafe(a.note),a.buy_date||''].join(','));
+  return 'ticker,exchange,alert_type,alert_value,direction,reference_price,enabled,account,broker,avg_cost,qty,note,buy_date\n'+rows.join('\n')+'\n'}
 function csvSafe(v){v=(v||'').toString();return /[",\n]/.test(v)?'"'+v.replace(/"/g,'""')+'"':v}
 
 const SUFFIX={NSE:'.NS',BSE:'.BO',US:''};
@@ -201,6 +202,7 @@ function symbol(a){return a.ticker+SUFFIX[a.exchange]}
 function alertKey(a){return symbol(a)+'|'+a.alert_type+'|'+parseFloat(a.alert_value)+'|'+a.direction+'|'+(a.alert_type==='percent'?parseFloat(a.reference_price):'')}
 function firedEntry(a){const k=alertKey(a);return state[k]?{key:k,...state[k]}:null}
 function trigger(a){
+  if(a.alert_type==='watch')return null;
   const v=parseFloat(a.alert_value);
   if(a.alert_type==='price')return v;
   const r=isFinite(parseFloat(a.reference_price))?parseFloat(a.reference_price):parseFloat(a.avg_cost);
@@ -219,7 +221,7 @@ function render(){
     card.innerHTML=`
       <div class="top">
         <span class="tk">${a.ticker}</span><span class="ex">${a.exchange}</span>
-        <span class="chip ${status}">${status==='fired'?'FIRED':status.toUpperCase()}</span>
+        <span class="chip ${a.alert_type==='watch'?'paused':status}">${a.alert_type==='watch'?'WATCH':(status==='fired'?'FIRED':status.toUpperCase())}</span>
       </div>
       ${(a.account||a.broker)?`<div class="sub" style="margin-top:2px">Held in: <span style="color:var(--paper)">${[a.account,a.broker].filter(Boolean).join(' / ')}</span></div>`:''}
       ${a.avg_cost?`<div class="sub" style="margin-top:2px">Cost ${cur(a)}${fmt(parseFloat(a.avg_cost))}${a.qty?` \u00B7 ${a.qty} shares`:''}${(a.alert_type==='percent'&&!a.reference_price)?' \u00B7 target measured from cost':''}</div>`:''}
@@ -335,15 +337,16 @@ function addAlert(){
     direction:$('n-di').value,reference_price:$('n-ref').value.trim(),enabled:true,
     account:$('n-acct').value.trim(),broker:$('n-brk').value.trim(),
     avg_cost:$('n-cost').value.trim(),qty:$('n-qty').value.trim(),
-    note:$('n-note').value.trim()};
+    note:$('n-note').value.trim(),buy_date:$('n-bdate').value.trim()};
   if(!a.ticker){toast('Ticker is required',true);return}
-  if(isNaN(parseFloat(a.alert_value))){toast('Alert value must be a number',true);return}
-  if(a.alert_type==='percent'&&isNaN(parseFloat(a.reference_price))&&isNaN(parseFloat(a.avg_cost))){
+  if(a.alert_type==='watch'){a.alert_value='';a.reference_price='';a.direction=''}
+  else if(isNaN(parseFloat(a.alert_value))){toast('Alert value must be a number',true);return}
+  if(a.alert_type!=='watch'&&a.alert_type==='percent'&&isNaN(parseFloat(a.reference_price))&&isNaN(parseFloat(a.avg_cost))){
     toast('Percent alerts need a reference price, or an avg cost to measure from',true);return}
   if(a.alert_type==='price')a.reference_price='';
   alerts.push(a);$('n-tk').value='';$('n-val').value='';$('n-ref').value='';
   $('n-acct').value='';$('n-brk').value='';$('n-cost').value='';$('n-qty').value='';
-  $('n-note').value='';
+  $('n-note').value='';$('n-bdate').value='';
   markDirty();toast(a.ticker+' staged, press Save to commit')}
 
 async function loadAll(){
@@ -411,12 +414,14 @@ function bulkImport(){
       alert_type:(c[2]||'').toLowerCase(),alert_value:c[3]||'',
       direction:(c[4]||'').toLowerCase(),reference_price:c[5]||'',
       enabled:!/^(no|false|0|off)$/i.test(c[6]||'yes'),
-      account:c[7]||'',broker:c[8]||'',avg_cost:c[9]||'',qty:c[10]||'',note:c[11]||''};
+      account:c[7]||'',broker:c[8]||'',avg_cost:c[9]||'',qty:c[10]||'',note:c[11]||'',buy_date:c[12]||''};
     if(!a.ticker||!SUFFIX.hasOwnProperty(a.exchange)||
-       !['price','percent'].includes(a.alert_type)||
-       !['above','below'].includes(a.direction)||
-       isNaN(parseFloat(a.alert_value))||
-       (a.alert_type==='percent'&&isNaN(parseFloat(a.reference_price)))){
+       !['price','percent','watch'].includes(a.alert_type)||
+       (a.alert_type!=='watch'&&(
+         !['above','below'].includes(a.direction)||
+         isNaN(parseFloat(a.alert_value))||
+         (a.alert_type==='percent'&&isNaN(parseFloat(a.reference_price))&&
+          isNaN(parseFloat(a.avg_cost)))))){
       skipped.push('line '+(idx+1));return}
     if(a.alert_type==='price')a.reference_price='';
     alerts.push(a);added++});
