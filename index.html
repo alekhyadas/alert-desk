@@ -62,6 +62,7 @@
   .wrow .meta{font-size:11.5px;color:var(--muted);flex:1}
   .wrow .cost{font-family:var(--mono);font-size:12.5px;color:var(--muted);min-width:150px}
   .wrow .qty{font-family:var(--mono);font-size:12px;color:var(--muted);min-width:52px}
+  .wrow .acct{font-size:11px;color:var(--muted);min-width:120px}
   .wrow .pl{font-family:var(--mono);font-size:12.5px;min-width:118px}
   .wrow .val{font-family:var(--mono);font-size:12.5px;color:var(--paper);min-width:78px;
     text-align:right}
@@ -76,6 +77,31 @@
     .wrow{flex-wrap:wrap;gap:6px}
     .whdr{display:none}
   }
+  .searchwrap{display:flex;gap:8px;margin-bottom:10px}
+  .searchwrap input{flex:1}
+  .mast{background:linear-gradient(160deg,var(--panel2),var(--panel));
+    border:1px solid var(--line);border-radius:14px;padding:16px 18px;margin-bottom:12px}
+  .mast .big{font-family:'Bricolage Grotesque',sans-serif;font-size:32px;
+    font-weight:700;letter-spacing:-.02em;line-height:1.1}
+  .mast .pl{font-family:var(--mono);font-size:16px;margin-left:10px}
+  .mast .sub2{font-size:12px;color:var(--muted);margin-top:4px}
+  .weight{display:flex;height:8px;border-radius:6px;overflow:hidden;margin-top:14px;
+    background:var(--ink)}
+  .weight i{display:block;height:100%}
+  .weight .up{background:var(--armed)}
+  .weight .dn{background:var(--crimson)}
+  .weight .flat{background:var(--line)}
+  .wkey{display:flex;gap:14px;font-size:11px;color:var(--muted);margin-top:6px}
+  .ev{display:flex;gap:9px;align-items:flex-start;padding:7px 0;
+    border-bottom:1px solid var(--line)}
+  .ev:last-child{border-bottom:0}
+  .ev .dot{font-size:14px;line-height:1.3}
+  .ev b{font-family:'Bricolage Grotesque',sans-serif;font-size:13.5px}
+  .taxrow{display:flex;justify-content:space-between;font-size:12.5px;padding:3px 0}
+  .taxrow span:last-child{font-family:var(--mono)}
+  details.fold summary{list-style:none;cursor:pointer;font-size:11px;
+    letter-spacing:.06em;color:var(--muted)}
+  details.fold summary::-webkit-details-marker{display:none}
   .grouphdr{font-family:'Bricolage Grotesque',sans-serif;font-size:13px;font-weight:600;
     color:var(--crimson);padding:10px 12px 4px;letter-spacing:.02em}
   #savebar{position:fixed;left:0;right:0;bottom:0;background:linear-gradient(transparent,var(--ink) 30%);
@@ -121,8 +147,15 @@
 
 <div id="app" style="display:none">
   <div id="digestcard"></div>
-  <div id="summary" class="card" style="padding:12px 14px"></div>
-  <div id="tabs" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px"></div>
+  <div id="masthead"></div>
+  <div id="attention"></div>
+  <div id="taxcard"></div>
+  <div class="searchwrap">
+    <input id="q" placeholder="Find a stock, account or note" oninput="render()" autocomplete="off">
+    <button class="small" onclick="$('q').value='';render()">Clear</button>
+  </div>
+  <div id="tabs" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px"></div>
+  <div id="sorts" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px;align-items:center"></div>
   <div id="list"></div>
   <div class="card">
     <h2 style="font-size:16px">Smart add</h2>
@@ -241,6 +274,45 @@ function fmt(n){return (n!==null&&n!==undefined&&isFinite(n))?n.toLocaleString('
 
 let tab = 'alerts';
 let tabInit = false;
+let sortKey = 'account';   // account | pct | invested | value | pl | ticker
+let sortDesc = true;
+
+function setSort(k){
+  if(sortKey===k)sortDesc=!sortDesc; else {sortKey=k;sortDesc=true}
+  render()}
+
+function rowStats(a){
+  const c=parseFloat(a.avg_cost), q=parseFloat(a.qty);
+  const d=digestBy[a.ticker], px=d&&d.price;
+  const invested=(isFinite(c)&&isFinite(q))?c*q:null;
+  const value=(px&&isFinite(q))?px*q:null;
+  const pl=(value!==null&&invested!==null)?value-invested:null;
+  const pct=(px&&isFinite(c))?(px/c-1)*100:null;
+  return {cost:c,qty:q,price:px,invested,value,pl,pct}}
+
+function sortRows(list){
+  // Rows missing the data being sorted on go last rather than pretending to
+  // be zero, which would bury real losses among unpriced holdings.
+  const key=x=>{
+    const st=rowStats(x.a);
+    if(sortKey==='pct')return st.pct;
+    if(sortKey==='invested')return st.invested;
+    if(sortKey==='value')return st.value;
+    if(sortKey==='pl')return st.pl;
+    return null};
+  if(sortKey==='ticker')
+    return list.sort((x,y)=>sortDesc?y.a.ticker.localeCompare(x.a.ticker)
+                                    :x.a.ticker.localeCompare(y.a.ticker));
+  if(sortKey==='account')
+    return list.sort((x,y)=>{
+      const A=[x.a.account,x.a.broker].join('/'), B=[y.a.account,y.a.broker].join('/');
+      return A===B?x.a.ticker.localeCompare(y.a.ticker):A.localeCompare(B)});
+  return list.sort((x,y)=>{
+    const a=key(x), b=key(y);
+    if(a===null&&b===null)return 0;
+    if(a===null)return 1;
+    if(b===null)return -1;
+    return sortDesc?b-a:a-b})}
 function setTab(t){tab=t;render()}
 
 function accountsOf(list){
@@ -254,20 +326,9 @@ function render(){
   if(!tabInit&&alerts.length){tabInit=true;
     if(!alertsOnly.length&&watchOnly.length)tab='watch'}
 
-  // summary strip
-  const val=watchOnly.concat(alertsOnly).reduce((s,a)=>{
-    const c=parseFloat(a.avg_cost),q=parseFloat(a.qty);
-    return s+((isFinite(c)&&isFinite(q))?c*q:0)},0);
-  $('summary').innerHTML=
-    `<div style="display:flex;gap:18px;flex-wrap:wrap;align-items:baseline">
-      <div><b style="font-size:18px">${alerts.length}</b> <span class="sub">rows</span></div>
-      <div><b style="font-size:18px">${alertsOnly.length}</b> <span class="sub">alerts</span></div>
-      <div><b style="font-size:18px">${watchOnly.length}</b> <span class="sub">watch only</span></div>
-      <div><b style="font-size:18px">${accountsOf(alerts).length}</b> <span class="sub">accounts</span></div>
-      ${val?`<div class="sub">invested \u20B9${val.toLocaleString('en-IN',{maximumFractionDigits:0})}</div>`:''}
-      ${digestDate?`<div class="sub">prices as of ${digestDate} digest</div>`
-        :`<div class="sub" style="color:var(--fired)">no digest yet, run it for prices</div>`}
-    </div>`;
+  renderMasthead(alerts);
+  renderAttention();
+  renderTax();
 
   // tabs
   const tabs=[['alerts','Alerts ('+alertsOnly.length+')'],
@@ -277,16 +338,48 @@ function render(){
   $('tabs').innerHTML=tabs.map(([k,lab])=>
     `<div class="tab${tab===k?' on':''}" onclick="setTab('${k.replace(/'/g,"\\'")}')">${lab}</div>`).join('');
 
+  const sorts=[['account','Account'],['pct','% gain'],['invested','Invested'],
+               ['value','Value'],['pl','P&L \u20B9'],['ticker','Name']];
+  $('sortbar').innerHTML='<span class="sub" style="font-size:11.5px">Sort:</span> '
+    + sorts.map(([k,lab])=>`<div class="tab${sortKey===k?' on':''}" onclick="setSort('${k}')">`
+      + lab + (sortKey===k?(sortDesc?' \u2193':' \u2191'):'') + '</div>').join('');
+
   let show=alerts.map((a,i)=>({a,i}));
-  if(tab==='alerts')show=show.filter(x=>!isWatch(x.a));
+  const term=($('q').value||'').trim().toLowerCase();
+  // A search looks across the whole portfolio. Filtering it down to the tab
+  // you happen to be sitting on hides matches for no good reason.
+  if(term){
+    show=show.filter(({a})=>
+      [a.ticker,a.account,a.broker,a.note].filter(Boolean)
+        .join(' ').toLowerCase().includes(term));
+  } else if(tab==='alerts')show=show.filter(x=>!isWatch(x.a));
   else if(tab==='watch')show=show.filter(x=>isWatch(x.a));
   else if(tab.startsWith('acct:'))show=show.filter(x=>(x.a.account||'Unassigned')===tab.slice(5));
 
-  if(!show.length){L.innerHTML='<div class="card sub">Nothing here yet.</div>';
+  if(!show.length){
+    L.innerHTML=`<div class="card sub">${term
+      ? 'No holding matches \u201C'+term.replace(/</g,'&lt;')+'\u201D. Clear the search to see everything.'
+      : 'Nothing in this view. Add an alert below, or paste rows into the bulk import.'}</div>`;
     $('savebar').classList.toggle('show',dirty);return}
 
+  // When the list is filtered, the masthead still shows the whole portfolio.
+  // Without this, a search or an account tab gives no sense of what the
+  // visible subset is actually worth.
+  if(term||tab.startsWith('acct:')){
+    const t=totals(show.map(x=>x.a));
+    if(t.inv){
+      const c=t.pl>=0?'var(--armed)':'var(--crimson)';
+      L.innerHTML=`<div class="card" style="padding:10px 14px">
+        <span class="sub">This view</span>
+        <span style="font-family:var(--mono);margin-left:10px">${inr(t.cur)}</span>
+        <span style="font-family:var(--mono);color:${c};margin-left:8px">${
+          t.pl>=0?'+':''}${inr(t.pl)} (${t.pct>=0?'+':''}${t.pct.toFixed(1)}%)</span>
+        <span class="sub" style="margin-left:8px">${show.length} of ${alerts.length}</span>
+      </div>`}}
+
   // watch rows are compact and grouped; alert rows keep full cards
-  const wr=show.filter(x=>isWatch(x.a)), ar=show.filter(x=>!isWatch(x.a));
+  const wr=sortRows(show.filter(x=>isWatch(x.a))),
+        ar=sortRows(show.filter(x=>!isWatch(x.a)));
 
   ar.forEach(({a,i})=>L.appendChild(alertCard(a,i)));
 
@@ -297,7 +390,8 @@ function render(){
     let lastAcct=null;
     wr.forEach(({a,i})=>{
       const acct=[a.account,a.broker].filter(Boolean).join(' / ')||'Unassigned';
-      if(acct!==lastAcct){html+=`<div class="grouphdr">${acct}</div>`;lastAcct=acct}
+      if(sortKey==='ticker'&&acct!==lastAcct){
+        html+=`<div class="grouphdr">${acct}</div>`;lastAcct=acct}
       const c=parseFloat(a.avg_cost),q=parseFloat(a.qty);
       const d=digestBy[a.ticker];
       const px=d&&d.price;
@@ -315,6 +409,7 @@ function render(){
       }
       html+=`<div class="wrow">
         <span class="tkn">${a.ticker}</span>
+        ${sortKey==='account'?'':`<span class="acct">${acct}</span>`}
         <span class="qty">${isFinite(q)?q+' sh':''}</span>
         ${pxHtml}
         ${plHtml}
@@ -541,10 +636,77 @@ function bulkImport(){
   toast(added+' alert(s) staged'+(skipped.length?', skipped: '+skipped.join(', '):'')+
     (added?'. Press Save to commit.':''),!added)}
 
-let digestBy={}, digestDate='';
+let digestBy={}, digestDate='', digestRaw=null;
 function indexDigest(d){
-  digestBy={}; digestDate=(d&&d.date)||'';
+  digestBy={}; digestRaw=d||null; digestDate=(d&&d.date)||'';
   ((d&&d.entries)||[]).forEach(e=>{digestBy[e.ticker]=e})}
+
+function inr(n,dp){return (n<0?'-':'')+'\u20B9'+Math.abs(n).toLocaleString('en-IN',
+  {minimumFractionDigits:dp||0,maximumFractionDigits:dp||0})}
+
+function totals(list){
+  let inv=0,cur=0,priced=0,up=0,dn=0,flat=0;
+  list.forEach(a=>{
+    const st=rowStats(a);
+    if(st.invested===null)return;
+    inv+=st.invested;
+    if(st.value!==null){cur+=st.value;priced++;
+      if(st.pl>0)up+=st.value; else if(st.pl<0)dn+=st.value; else flat+=st.value}
+    else cur+=st.invested});
+  return {inv,cur,pl:cur-inv,pct:inv?((cur/inv-1)*100):0,priced,up,dn,flat}}
+
+function renderMasthead(list){
+  const t=totals(list);
+  if(!t.inv){$('masthead').innerHTML='';return}
+  const col=t.pl>=0?'var(--armed)':'var(--crimson)';
+  const tot=t.up+t.dn+t.flat||1;
+  const accounts=accountsOf(list).length;
+  $('masthead').innerHTML=`<div class="mast">
+    <div><span class="big">${inr(t.cur)}</span><span class="pl" style="color:${col}">${
+      t.pl>=0?'+':''}${inr(t.pl)} &nbsp;${t.pct>=0?'+':''}${t.pct.toFixed(1)}%</span></div>
+    <div class="sub2">invested ${inr(t.inv)} \u00B7 ${list.length} holdings \u00B7
+      ${accounts} account${accounts===1?'':'s'}${digestDate?' \u00B7 prices as of '+digestDate:''}</div>
+    ${t.priced?`<div class="weight">
+      <i class="up" style="width:${t.up/tot*100}%"></i>
+      <i class="flat" style="width:${t.flat/tot*100}%"></i>
+      <i class="dn" style="width:${t.dn/tot*100}%"></i></div>
+    <div class="wkey"><span style="color:var(--armed)">\u25CF in profit ${inr(t.up)}</span>
+      <span style="color:var(--crimson)">\u25CF at a loss ${inr(t.dn)}</span></div>`:
+      `<div class="sub2" style="color:var(--fired);margin-top:8px">No prices yet.
+       Run the daily digest once to fill these in.</div>`}
+  </div>`}
+
+function renderAttention(){
+  const ev=(digestRaw&&digestRaw.events)||[];
+  if(!ev.length){$('attention').innerHTML='';return}
+  const dot={breakeven:'\u2705',near:'\uD83C\uDFAF',recovering:'\u2197\uFE0F',
+             newlow:'\uD83D\uDD3B',ath:'\uD83D\uDE80',nearath:'\uD83D\uDC40'};
+  $('attention').innerHTML=`<div class="card">
+    <details class="fold" open><summary>WHAT CHANGED \u00B7 ${ev.length}</summary>
+    <div style="margin-top:8px">${ev.map(x=>`<div class="ev">
+      <span class="dot">${dot[x.kind]||'\u2022'}</span>
+      <div><b>${x.ticker}</b><div class="sub">${x.text}</div></div>
+    </div>`).join('')}</div></details></div>`}
+
+function renderTax(){
+  const t=digestRaw&&digestRaw.tax;
+  if(!t){$('taxcard').innerHTML='';return}
+  const row=(l,v,c)=>`<div class="taxrow"><span class="sub">${l}</span>
+    <span style="color:${c||'var(--paper)'}">${v}</span></div>`;
+  $('taxcard').innerHTML=`<div class="card">
+    <details class="fold"><summary>TAX ON UNREALISED P&amp;L \u00B7 tap to open</summary>
+    <div style="margin-top:8px">
+      ${row('Short term net', (t.net_st>=0?'+':'')+inr(t.net_st),
+            t.net_st>=0?'var(--armed)':'var(--crimson)')}
+      ${row('Long term net', (t.net_lt>=0?'+':'')+inr(t.net_lt),
+            t.net_lt>=0?'var(--armed)':'var(--crimson)')}
+      ${row('Tax if realised today', inr(t.est_tax))}
+      ${(t.approaching||[]).slice(0,4).map(a=>
+        `<div class="sub" style="color:var(--fired);margin-top:6px">${a[0]} turns
+         long term in ${a[1]} days, worth about ${inr(a[3])}</div>`).join('')}
+      <div class="sub" style="margin-top:8px">Rates change each Budget and this
+        ignores your other income. Confirm with your CA.</div>
+    </div></details></div>`}
 
 function renderDigest(d){
   indexDigest(d);
