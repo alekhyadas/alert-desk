@@ -891,6 +891,31 @@ function chatPush(cls,text){
   $('chatlog').appendChild(el);
   el.scrollIntoView({block:'nearest'})}
 
+// Google blocks older model IDs for new API keys ahead of the published
+// shutdown, so a hardcoded name eventually 404s. Ask the key what it can use.
+let geminiModel=null;
+async function pickGeminiModel(key){
+  if(geminiModel)return geminiModel;
+  try{
+    const r=await fetch('https://generativelanguage.googleapis.com/v1beta/models',
+      {headers:{'x-goog-api-key':key}});
+    if(r.ok){
+      const d=await r.json();
+      const usable=(d.models||[])
+        .filter(m=>(m.supportedGenerationMethods||[]).includes('generateContent'))
+        .map(m=>(m.name||'').replace('models/',''))
+        .filter(n=>!/embedding|aqa|image|tts|vision|live|native-audio/.test(n));
+      usable.sort((a,b)=>{
+        const v=n=>parseFloat((n.match(/(\d+(?:\.\d+)?)/)||[0,0])[1])||0;
+        const f=n=>n.includes('flash')?1:0;
+        const p=n=>(n.includes('preview')||n.includes('exp'))?1:0;
+        return (v(b)-v(a))||(f(b)-f(a))||(p(a)-p(b))||(a.length-b.length)});
+      if(usable.length){geminiModel=usable[0];return geminiModel}
+    }
+  }catch(e){}
+  geminiModel='gemini-flash-latest';
+  return geminiModel}
+
 async function doAsk(){
   const q=$('askq').value.trim();
   if(!q)return;
@@ -905,8 +930,9 @@ async function doAsk(){
   chatPush('me',q);
   $('askhint').textContent='Thinking...';
   try{
+    const model=await pickGeminiModel(key.trim());
     const res=await fetch('https://generativelanguage.googleapis.com/v1beta/'
-      +'models/gemini-2.5-flash:generateContent',{
+      +'models/'+model+':generateContent',{
       method:'POST',
       headers:{'Content-Type':'application/json','x-goog-api-key':key.trim()},
       body:JSON.stringify({
@@ -932,7 +958,8 @@ async function doAsk(){
     chatPush('err','Could not reach Gemini: '+e.message);
   }
   if($('askhint').textContent==='Thinking...')
-    $('askhint').textContent='Answers use the last digest, so prices can be a day old.';
+    $('askhint').textContent='Answers use the last digest, so prices can be a day old.'
+      + (geminiModel?' Model: '+geminiModel:'');
 }
 
 function forget(){localStorage.removeItem('alertdesk');localStorage.removeItem('geminikey');location.reload()}
