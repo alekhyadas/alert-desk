@@ -78,6 +78,11 @@
     .whdr{display:none}
   }
   .searchwrap{display:flex;gap:8px;margin-bottom:10px}
+  .msg{border-radius:10px;padding:9px 12px;margin-top:8px;font-size:13.5px;
+    line-height:1.5;white-space:pre-wrap}
+  .msg.me{background:var(--panel2);border:1px solid var(--line)}
+  .msg.ai{background:var(--ink);border:1px solid var(--line)}
+  .msg.err{background:var(--ink);border:1px solid var(--crimson-deep);color:#F09A9A}
   .searchwrap input{flex:1}
   .mast{background:linear-gradient(160deg,var(--panel2),var(--panel));
     border:1px solid var(--line);border-radius:14px;padding:16px 18px;margin-bottom:12px}
@@ -148,8 +153,23 @@
 <div id="app" style="display:none">
   <div id="digestcard"></div>
   <div id="masthead"></div>
+  <div id="perfcard"></div>
   <div id="attention"></div>
   <div id="taxcard"></div>
+  <div id="chatcard" class="card">
+    <details class="fold" id="chatfold">
+      <summary>ASK ABOUT YOUR PORTFOLIO</summary>
+      <div style="margin-top:10px">
+        <div id="chatlog"></div>
+        <div class="searchwrap" style="margin:8px 0 0">
+          <input id="askq" placeholder="e.g. which holdings are near their highs?"
+            onkeydown="if(event.key==='Enter')doAsk()">
+          <button class="primary small" onclick="doAsk()">Ask</button>
+        </div>
+        <div id="askhint" class="sub" style="margin-top:6px"></div>
+      </div>
+    </details>
+  </div>
   <div class="searchwrap">
     <input id="q" placeholder="Find a stock, account or note" oninput="render()" autocomplete="off">
     <button class="small" onclick="$('q').value='';render()">Clear</button>
@@ -276,6 +296,35 @@ function fmt(n){return (n!==null&&n!==undefined&&isFinite(n))?n.toLocaleString('
 
 let tab = 'alerts';
 let tabInit = false;
+let combine = false;
+function toggleCombine(){combine=!combine;render()}
+
+// Merge the same ticker held in several accounts into one line. Zerodha and
+// Groww each show only their own account, so a stock held four times looks
+// like four small positions instead of one real exposure.
+function combineRows(list){
+  const by={};
+  list.forEach(({a,i})=>{
+    const k=a.ticker;
+    const st=rowStats(a);
+    if(!by[k])by[k]={a:{...a,account:'',broker:'',note:''},i,accs:[],
+      qty:0,inv:0,val:0,price:st.price};
+    const g=by[k];
+    if(st.qty)g.qty+=st.qty;
+    if(st.invested)g.inv+=st.invested;
+    if(st.value!==null)g.val+=st.value;
+    if(st.price)g.price=st.price;
+    const who=[a.account,a.broker].filter(Boolean).join('/');
+    if(who&&!g.accs.includes(who))g.accs.push(who)});
+  return Object.values(by).map(g=>{
+    g.a.qty=g.qty?String(g.qty):'';
+    g.a.avg_cost=g.qty&&g.inv?(g.inv/g.qty).toFixed(2):'';
+    g.a.account=g.accs.length>1?g.accs.length+' accounts':(g.accs[0]||'');
+    g.a.broker='';
+    g.a.note=g.accs.length>1?g.accs.join(', '):'';
+    g.a._combined=g.accs.length>1;
+    return {a:g.a,i:g.i}})}
+
 let sortKey = 'account';   // account | pct | invested | value | pl | ticker
 let sortDesc = true;
 
@@ -329,6 +378,7 @@ function render(){
     if(!alertsOnly.length&&watchOnly.length)tab='watch'}
 
   renderMasthead(alerts);
+  renderPerf();
   renderAttention();
   renderTax();
 
@@ -344,7 +394,10 @@ function render(){
                ['value','Value'],['pl','P&L \u20B9'],['ticker','Name']];
   $('sortbar').innerHTML='<span class="sub" style="font-size:11.5px">Sort:</span> '
     + sorts.map(([k,lab])=>`<div class="tab${sortKey===k?' on':''}" onclick="setSort('${k}')">`
-      + lab + (sortKey===k?(sortDesc?' \u2193':' \u2191'):'') + '</div>').join('');
+      + lab + (sortKey===k?(sortDesc?' \u2193':' \u2191'):'') + '</div>').join('')
+    + `<div class="tab${combine?' on':''}" onclick="toggleCombine()"
+        title="Merge the same stock held in several accounts">`
+    + (combine?'\u25CF ':'') + 'Combine accounts</div>';
 
   let show=alerts.map((a,i)=>({a,i}));
   const term=($('q').value||'').trim().toLowerCase();
@@ -380,6 +433,7 @@ function render(){
       </div>`}}
 
   // watch rows are compact and grouped; alert rows keep full cards
+  if(combine)show=combineRows(show);
   const wr=sortRows(show.filter(x=>isWatch(x.a))),
         ar=sortRows(show.filter(x=>!isWatch(x.a)));
 
@@ -411,13 +465,14 @@ function render(){
       }
       html+=`<div class="wrow">
         <span class="tkn">${a.ticker}</span>
-        ${sortKey==='account'?'':`<span class="acct">${acct}</span>`}
+        ${(sortKey==='account'&&!combine)?'':`<span class="acct">${acct}</span>`}
         <span class="qty">${isFinite(q)?q+' sh':''}</span>
         ${pxHtml}
         ${plHtml}
         ${valHtml}
-        <button class="small" onclick="editAlert(${i})">Edit</button>
-        <button class="small" onclick="delAlert(${i})">Delete</button>
+        ${a._combined?'<span class="sub">merged</span>'
+          :`<button class="small" onclick="editAlert(${i})">Edit</button>
+            <button class="small" onclick="delAlert(${i})">Delete</button>`}
       </div>`});
     box.innerHTML=html; L.appendChild(box)}
 
@@ -570,6 +625,15 @@ async function loadAll(){
     renderDigest(dg?JSON.parse(b64dec(dg.content)):null)
   }catch(e){renderDigest(null)}
   try{
+    const hf=await gh(`/repos/${own}/${rep}/contents/portfolio_history.csv`);
+    const txt=hf?b64dec(hf.content):'';
+    const rows=txt.split(/\r?\n/).filter(l=>l.trim());
+    const head=rows[0].split(',');
+    history=rows.slice(1).map(l=>{const c=l.split(','),o={};
+      head.forEach((h,i)=>o[h.trim()]=(c[i]||'').trim());return o})
+      .filter(r=>r.date)
+  }catch(e){history=[]}
+  try{
     const runs=await gh(`/repos/${own}/${rep}/actions/runs?per_page=1`);
     if(runs&&runs.workflow_runs&&runs.workflow_runs.length){
       const r=runs.workflow_runs[0];
@@ -678,6 +742,44 @@ function renderMasthead(list){
        Run the daily digest once to fill these in.</div>`}
   </div>`}
 
+let history=[];
+function renderPerf(){
+  const box=$('perfcard');
+  if(history.length<2){box.innerHTML='';return}
+  const pts=history.map(r=>({d:r.date,v:parseFloat(r.current),
+    inv:parseFloat(r.invested)})).filter(p=>isFinite(p.v));
+  if(pts.length<2){box.innerHTML='';return}
+  const W=560,H=110,P=4;
+  const vs=pts.map(p=>p.v), lo=Math.min(...vs), hi=Math.max(...vs);
+  const span=(hi-lo)||1;
+  const x=i=>P+i*(W-2*P)/(pts.length-1);
+  const y=v=>P+(1-(v-lo)/span)*(H-2*P);
+  const line=pts.map((p,i)=>(i?'L':'M')+x(i).toFixed(1)+' '+y(p.v).toFixed(1)).join(' ');
+  const area=line+' L'+x(pts.length-1).toFixed(1)+' '+(H-P)+' L'+P+' '+(H-P)+' Z';
+  const first=pts[0], last=pts[pts.length-1];
+  const ch=last.v-first.v, up=ch>=0;
+  const col=up?'var(--armed)':'var(--crimson)';
+  // Compare like for like: money added shows up as a rise in invested, and
+  // calling that a gain would be wrong.
+  const addedIn=last.inv-first.inv;
+  box.innerHTML=`<div class="card">
+    <div class="sub" style="font-size:11px;letter-spacing:.06em">PORTFOLIO SINCE ${first.d}</div>
+    <svg viewBox="0 0 ${W} ${H}" style="width:100%;height:110px;margin-top:8px" preserveAspectRatio="none">
+      <path d="${area}" fill="${up?'rgba(99,185,138,.13)':'rgba(210,74,79,.13)'}"/>
+      <path d="${line}" fill="none" stroke="${col}" stroke-width="2"
+        stroke-linejoin="round" stroke-linecap="round"/>
+    </svg>
+    <div style="display:flex;justify-content:space-between;font-size:11.5px;
+      color:var(--muted);margin-top:2px">
+      <span>${first.d} \u00B7 ${inr(first.v)}</span>
+      <span>${last.d} \u00B7 ${inr(last.v)}</span></div>
+    <div style="font-family:var(--mono);font-size:13px;color:${col};margin-top:6px">
+      ${up?'+':''}${inr(ch)} over ${pts.length} recorded day${pts.length===1?'':'s'}</div>
+    ${Math.abs(addedIn)>1?`<div class="sub" style="margin-top:2px">Invested amount
+      changed by ${inr(addedIn)} in the same period, so part of this is money
+      added or withdrawn rather than performance.</div>`:''}
+  </div>`}
+
 function renderAttention(){
   const ev=(digestRaw&&digestRaw.events)||[];
   if(!ev.length){$('attention').innerHTML='';return}
@@ -735,7 +837,105 @@ function renderDigest(d){
     <div style="margin-top:10px">${rows}</div>
   </div>`}
 
-function forget(){localStorage.removeItem('alertdesk');location.reload()}
+// ---------- ask your portfolio ----------
+const ASK_SYSTEM = "You answer questions about this person's own share "
+ + "portfolio. Ground every claim in the data provided; if the data does not "
+ + "contain the answer, say so plainly rather than filling the gap from "
+ + "memory. Prices come from a daily digest so they are up to a day old, and "
+ + "you should say so when it matters. You are not their adviser: describe "
+ + "what the numbers show and what would follow from it, note the "
+ + "considerations on both sides, and leave the decision with them. Amounts "
+ + "are Indian rupees; use lakh and crore where natural. Be concise, a few "
+ + "short paragraphs at most, plain text with no markdown.";
+
+function askContext(question){
+  // Same shape as the Telegram side: name the holdings the question is about,
+  // otherwise summarise the largest. Sending 134 rows every time would spend
+  // the context on positions the question is not about.
+  const q=question.toLowerCase(), out=[];
+  if(digestDate)out.push('Prices are from the digest dated '+digestDate+', not live.');
+  const t=totals(alerts);
+  if(t.inv)out.push('Portfolio: invested '+inr(t.inv)+', now '+inr(t.cur)
+    +', P&L '+(t.pl>=0?'+':'')+inr(t.pl)+' ('+t.pct.toFixed(2)+'%) across '
+    +alerts.length+' rows.');
+  const describe=a=>{
+    const st=rowStats(a), d=digestBy[a.ticker]||{};
+    const b=[a.ticker];
+    if(a.account)b.push('held by '+a.account+' at '+(a.broker||''));
+    if(st.cost)b.push('cost '+st.cost);
+    if(st.qty)b.push('qty '+st.qty);
+    if(st.price)b.push('price '+st.price.toFixed(2));
+    if(st.pct!==null)b.push('P&L '+st.pct.toFixed(1)+'%');
+    if(d.ath)b.push('peak '+d.ath.toFixed(2)+' ('+(d.off_ath_pct||0).toFixed(1)+'% from it)');
+    if(d.earnings)b.push('next results '+d.earnings);
+    if(a.note)b.push('your note: '+a.note);
+    if(a.alert_type!=='watch')b.push('alert '+a.direction+' '+a.alert_value);
+    return '  '+b.join(' | ')};
+  const named=alerts.filter(a=>a.ticker&&q.includes(a.ticker.toLowerCase()));
+  if(named.length){out.push('Holdings the question mentions:');
+    named.slice(0,12).forEach(a=>out.push(describe(a)))}
+  else{out.push('Largest holdings by value:');
+    alerts.map(a=>({a,v:rowStats(a).value||0})).sort((x,y)=>y.v-x.v)
+      .slice(0,15).forEach(x=>out.push(describe(x.a)))}
+  const ev=(digestRaw&&digestRaw.events)||[];
+  if(ev.length){out.push('Recent position changes:');
+    ev.slice(0,8).forEach(x=>out.push('  '+x.ticker+': '+x.text))}
+  const tx=digestRaw&&digestRaw.tax;
+  if(tx)out.push('Tax on unrealised P&L: short term net '+inr(tx.net_st)
+    +', long term net '+inr(tx.net_lt)+', tax if realised today about '+inr(tx.est_tax)+'.');
+  return out.join('\n')}
+
+function chatPush(cls,text){
+  const el=document.createElement('div');
+  el.className='msg '+cls; el.textContent=text;
+  $('chatlog').appendChild(el);
+  el.scrollIntoView({block:'nearest'})}
+
+async function doAsk(){
+  const q=$('askq').value.trim();
+  if(!q)return;
+  let key=localStorage.getItem('geminikey');
+  if(!key){
+    key=prompt('Paste your Google AI Studio API key.\n\nFree from '
+      +'aistudio.google.com/apikey. It is stored only in this browser, the '
+      +'same as your GitHub token.');
+    if(!key)return;
+    localStorage.setItem('geminikey',key.trim())}
+  $('askq').value='';
+  chatPush('me',q);
+  $('askhint').textContent='Thinking...';
+  try{
+    const res=await fetch('https://generativelanguage.googleapis.com/v1beta/'
+      +'models/gemini-2.5-flash:generateContent',{
+      method:'POST',
+      headers:{'Content-Type':'application/json','x-goog-api-key':key.trim()},
+      body:JSON.stringify({
+        system_instruction:{parts:[{text:ASK_SYSTEM}]},
+        contents:[{parts:[{text:'Portfolio data:\n'+askContext(q)+'\n\nQuestion: '+q}]}],
+        generationConfig:{temperature:0.3,maxOutputTokens:900}})});
+    if(res.status===429){
+      chatPush('err','Google\u2019s free daily quota is used up. It resets at midnight Pacific time.');
+    }else if(!res.ok){
+      const b=await res.text();
+      chatPush('err','Gemini returned HTTP '+res.status+'. '+b.slice(0,160));
+      if(res.status===400||res.status===403)
+        $('askhint').innerHTML='<a href="#" onclick="localStorage.removeItem(\'geminikey\');'
+          +'alert(\'Key cleared. Ask again to enter a new one.\');return false">Clear the saved key</a>';
+    }else{
+      const d=await res.json();
+      const c=(d.candidates||[{}])[0];
+      const txt=((c.content||{}).parts||[]).map(p=>p.text||'').join('').trim();
+      chatPush(txt?'ai':'err', txt||('Gemini returned nothing ('
+        +(c.finishReason||'no reason given')+'). Try rephrasing.'));
+    }
+  }catch(e){
+    chatPush('err','Could not reach Gemini: '+e.message);
+  }
+  if($('askhint').textContent==='Thinking...')
+    $('askhint').textContent='Answers use the last digest, so prices can be a day old.';
+}
+
+function forget(){localStorage.removeItem('alertdesk');localStorage.removeItem('geminikey');location.reload()}
 
 (function init(){
   const saved=localStorage.getItem('alertdesk');
