@@ -625,6 +625,10 @@ async function loadAll(){
     renderDigest(dg?JSON.parse(b64dec(dg.content)):null)
   }catch(e){renderDigest(null)}
   try{
+    const rf=await gh(`/repos/${own}/${rep}/contents/research.json`);
+    researchBy=rf?(JSON.parse(b64dec(rf.content)).stocks||{}):{}
+  }catch(e){researchBy={}}
+  try{
     const hf=await gh(`/repos/${own}/${rep}/contents/portfolio_history.csv`);
     const txt=hf?b64dec(hf.content):'';
     const rows=txt.split(/\r?\n/).filter(l=>l.trim());
@@ -742,7 +746,7 @@ function renderMasthead(list){
        Run the daily digest once to fill these in.</div>`}
   </div>`}
 
-let history=[];
+let history=[], researchBy={};
 function renderPerf(){
   const box=$('perfcard');
   if(history.length<2){box.innerHTML='';return}
@@ -867,19 +871,83 @@ function askContext(question){
     if(st.price)b.push('price '+st.price.toFixed(2));
     if(st.pct!==null)b.push('P&L '+st.pct.toFixed(1)+'%');
     if(d.ath)b.push('peak '+d.ath.toFixed(2)+' ('+(d.off_ath_pct||0).toFixed(1)+'% from it)');
+    if(d.day_pct!==undefined&&d.day_pct!==null)b.push('today '+d.day_pct+'%');
+    if(d.off_high_pct!==undefined)b.push(d.off_high_pct+'% vs 52w high');
+    if(d.off_low_pct!==undefined)b.push('+'+d.off_low_pct+'% vs 52w low');
+    if(d.target_upside_pct!==undefined)b.push('analyst target '+d.target_upside_pct+'% away');
     if(d.earnings)b.push('next results '+d.earnings);
     if(a.note)b.push('your note: '+a.note);
+    if(a.sector)b.push('sector '+a.sector);
     if(a.alert_type!=='watch')b.push('alert '+a.direction+' '+a.alert_value);
-    return '  '+b.join(' | ')};
-  const named=alerts.filter(a=>a.ticker&&q.includes(a.ticker.toLowerCase()));
+    let line='  '+b.join(' | ');
+    const rs=researchBy[a.ticker];
+    if(rs){
+      const sub=[];
+      const lq=rs.last_quarter||{};
+      if(lq.period)sub.push('last quarter '+lq.period
+        +(lq.revenue_cr?', revenue '+lq.revenue_cr+' Cr':'')
+        +(lq.rev_yoy!==undefined?' ('+lq.rev_yoy+'% YoY)':'')
+        +(lq.net_cr?', net profit '+lq.net_cr+' Cr':'')
+        +(lq.net_yoy!==undefined?' ('+lq.net_yoy+'% YoY)':''));
+      if(lq.margin_verdict)sub.push(lq.margin_verdict);
+      (lq.flags||[]).slice(0,2).forEach(f=>sub.push('flag: '+f));
+      if(rs.eps&&rs.eps.surprise_pct!==undefined)
+        sub.push('EPS '+rs.eps.surprise_pct+'% vs estimate');
+      const an=rs.analyst||{};
+      if(an.target)sub.push('analyst target '+an.target
+        +(an.target_vs_price_pct!==undefined?' ('+an.target_vs_price_pct+'% from price)':'')
+        +(an.n_analysts?', '+an.n_analysts+' analysts':''));
+      (rs.rating_changes||[]).slice(0,2).forEach(r=>
+        sub.push(r.date+' '+r.firm+': '+r.change));
+      if(rs.next_results)sub.push('next results '+rs.next_results);
+      (rs.themes||[]).slice(0,3).forEach(t=>sub.push('thesis ('+t.type+'): '+t.theme));
+      (rs.thesis_news||[]).slice(0,2).forEach(t=>
+        sub.push('news '+t.lean+' the '+t.theme+' thesis: '+t.headline));
+      (rs.recent_headlines||[]).slice(0,2).forEach(h=>sub.push('headline: '+h));
+      if(sub.length)line+='\n      '+sub.join('\n      ');
+    }
+    return line};
+  // Word boundaries: a substring test finds "LT" inside "results" and "ITC"
+  // inside "switch". Duplicates dropped, since a stock can have both a watch
+  // row and an alert row.
+  const seen=new Set();
+  const named=alerts.filter(a=>{
+    if(!a.ticker||seen.has(a.ticker))return false;
+    const re=new RegExp('(?<![a-z0-9])'+a.ticker.toLowerCase()
+      .replace(/[.*+?^${}()|[\]\\]/g,'\\$&')+'(?![a-z0-9])');
+    if(re.test(q)){seen.add(a.ticker);return true}
+    return false});
   if(named.length){out.push('Holdings the question mentions:');
     named.slice(0,12).forEach(a=>out.push(describe(a)))}
   else{out.push('Largest holdings by value:');
+    const shown=new Set();
     alerts.map(a=>({a,v:rowStats(a).value||0})).sort((x,y)=>y.v-x.v)
-      .slice(0,15).forEach(x=>out.push(describe(x.a)))}
+      .forEach(x=>{if(shown.size<15&&!shown.has(x.a.ticker)){
+        shown.add(x.a.ticker);out.push(describe(x.a))}})}
+  // These events are the only record of a position recovering, so a question
+  // about stocks that came back after a slump cannot be answered without them.
   const ev=(digestRaw&&digestRaw.events)||[];
-  if(ev.length){out.push('Recent position changes:');
-    ev.slice(0,8).forEach(x=>out.push('  '+x.ticker+': '+x.text))}
+  if(ev.length){
+    out.push('Position changes detected (these record recoveries, breakouts '
+      +'and new lows over time):');
+    ev.slice(0,20).forEach(x=>out.push('  ['+x.kind+'] '+x.ticker+': '+x.text))}
+  if(history&&history.length>1){
+    const f=history[0],l=history[history.length-1];
+    out.push('Portfolio value went from '+inr(parseFloat(f.current))+' on '+f.date
+      +' to '+inr(parseFloat(l.current))+' on '+l.date+'.')}
+  const pa=(digestRaw&&digestRaw.per_account_tax)||{};
+  if(Object.keys(pa).length){
+    out.push('Long-term capital gains allowance is Rs 1,25,000 per PAN per '
+      +'financial year, unused portions expire on 31 March:');
+    Object.entries(pa).forEach(([who,a])=>out.push('  '+who
+      +': long-term position '+inr(a.lt_net||0)+', short-term '+inr(a.st_net||0)
+      +', allowance still free '+inr(a.exempt_left||0)))}
+  const con=(digestRaw&&digestRaw.concentration)||[];
+  if(con.length)out.push('Concentration: '+con.slice(0,6)
+    .map(c=>c.ticker+' '+c.pct+'%').join('; '));
+  const dvd=(digestRaw&&digestRaw.dividends)||{};
+  if(dvd.ttm_total)out.push('Dividend income last 12 months: about '
+    +inr(dvd.ttm_total)+' from '+dvd.payers+' holdings.');
   const tx=digestRaw&&digestRaw.tax;
   if(tx)out.push('Tax on unrealised P&L: short term net '+inr(tx.net_st)
     +', long term net '+inr(tx.net_lt)+', tax if realised today about '+inr(tx.est_tax)+'.');
@@ -954,6 +1022,20 @@ async function geminiGenerate(key,body){
     +(geminiTried.join(', ')||'none')+'. Last error: '+lastErr};
 }
 
+function stripThinking(t){
+  // Belt and braces: if a model still returns its planning, drop everything
+  // before the last blank line that precedes ordinary prose. Reasoning comes
+  // out as dense asterisk bullets, so that is the marker.
+  if(!t)return t;
+  const lines=t.split('\n');
+  let lastBullet=-1;
+  lines.forEach((l,i)=>{if(/^\s*\*\s/.test(l))lastBullet=i});
+  if(lastBullet>=0&&lastBullet>lines.length*0.4){
+    const after=lines.slice(lastBullet+1).join('\n').trim();
+    if(after.length>80)return after;
+  }
+  return t.trim()}
+
 async function doAsk(){
   const q=$('askq').value.trim();
   if(!q)return;
@@ -970,8 +1052,12 @@ async function doAsk(){
   const out=await geminiGenerate(key.trim(),{
     system_instruction:{parts:[{text:ASK_SYSTEM}]},
     contents:[{parts:[{text:'Portfolio data:\n'+askContext(q)+'\n\nQuestion: '+q}]}],
-    generationConfig:{temperature:0.3,maxOutputTokens:900}});
-  if(out.ok){chatPush('ai',out.text)}
+    generationConfig:{temperature:0.3,maxOutputTokens:1200,
+      // Newer Gemini models reason before answering and will emit those
+      // tokens unless the budget is zeroed, which is what produced pages of
+      // bullet-pointed self-instruction instead of an answer.
+      thinkingConfig:{thinkingBudget:0}}});
+  if(out.ok){chatPush('ai',stripThinking(out.text))}
   else{
     chatPush('err',out.error);
     $('askhint').innerHTML='<a href="#" onclick="localStorage.removeItem(\'geminikey\');'
