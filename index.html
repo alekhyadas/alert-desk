@@ -891,30 +891,68 @@ function chatPush(cls,text){
   $('chatlog').appendChild(el);
   el.scrollIntoView({block:'nearest'})}
 
-// Google blocks older model IDs for new API keys ahead of the published
-// shutdown, so a hardcoded name eventually 404s. Ask the key what it can use.
-let geminiModel=null;
-async function pickGeminiModel(key){
-  if(geminiModel)return geminiModel;
+// Google's model list advertises generateContent support that some models
+// do not actually honour, and it blocks older IDs for new keys. Neither can
+// be settled by reading the list, so the working model is found by trying
+// candidates in order and keeping the first that answers.
+let geminiModel=null, geminiTried=[];
+
+async function geminiCandidates(key){
+  const fallback=['gemini-flash-latest','gemini-2.0-flash','gemini-flash-lite-latest'];
   try{
     const r=await fetch('https://generativelanguage.googleapis.com/v1beta/models',
       {headers:{'x-goog-api-key':key}});
+    if(!r.ok)return fallback;
+    const d=await r.json();
+    const list=(d.models||[])
+      .filter(m=>(m.supportedGenerationMethods||[]).includes('generateContent'))
+      .map(m=>(m.name||'').replace('models/',''))
+      .filter(n=>!/embedding|aqa|image|tts|vision|live|native-audio|thinking/.test(n));
+    list.sort((a,b)=>{
+      const v=n=>parseFloat((n.match(/(\d+(?:\.\d+)?)/)||[0,0])[1])||0;
+      const f=n=>n.includes('flash')?1:0;
+      const p=n=>(n.includes('preview')||n.includes('exp'))?1:0;
+      return (v(b)-v(a))||(f(b)-f(a))||(p(a)-p(b))||(a.length-b.length)});
+    return list.concat(fallback.filter(x=>!list.includes(x)));
+  }catch(e){return fallback}}
+
+async function geminiGenerate(key,body){
+  // Returns {ok, text, error}. Walks the candidate list, skipping models
+  // that reject generateContent outright, so a rename or an API-surface
+  // change costs one wasted request rather than breaking the feature.
+  const tryOne=async model=>{
+    const r=await fetch('https://generativelanguage.googleapis.com/v1beta/models/'
+      +model+':generateContent',{method:'POST',
+      headers:{'Content-Type':'application/json','x-goog-api-key':key},
+      body:JSON.stringify(body)});
+    return {r,model}};
+  let cands = geminiModel ? [geminiModel] : await geminiCandidates(key);
+  geminiTried=[];
+  let lastErr='';
+  for(const model of cands.slice(0,6)){
+    let res;
+    try{ res=await tryOne(model) }catch(e){ lastErr=e.message; continue }
+    const {r}=res;
     if(r.ok){
+      geminiModel=model;
       const d=await r.json();
-      const usable=(d.models||[])
-        .filter(m=>(m.supportedGenerationMethods||[]).includes('generateContent'))
-        .map(m=>(m.name||'').replace('models/',''))
-        .filter(n=>!/embedding|aqa|image|tts|vision|live|native-audio/.test(n));
-      usable.sort((a,b)=>{
-        const v=n=>parseFloat((n.match(/(\d+(?:\.\d+)?)/)||[0,0])[1])||0;
-        const f=n=>n.includes('flash')?1:0;
-        const p=n=>(n.includes('preview')||n.includes('exp'))?1:0;
-        return (v(b)-v(a))||(f(b)-f(a))||(p(a)-p(b))||(a.length-b.length)});
-      if(usable.length){geminiModel=usable[0];return geminiModel}
+      const c=(d.candidates||[{}])[0];
+      const txt=((c.content||{}).parts||[]).map(p=>p.text||'').join('').trim();
+      return txt?{ok:true,text:txt,model}
+                :{ok:false,error:'Returned nothing ('+(c.finishReason||'no reason')+').'};
     }
-  }catch(e){}
-  geminiModel='gemini-flash-latest';
-  return geminiModel}
+    if(r.status===429)
+      return {ok:false,error:'Google\u2019s free daily quota is used up. '
+        +'It resets at midnight Pacific time.'};
+    const body=await r.text();
+    geminiTried.push(model);
+    lastErr='HTTP '+r.status+' '+body.slice(0,120);
+    if(r.status===400||r.status===404){ geminiModel=null; continue }
+    return {ok:false,error:'Gemini returned '+lastErr};
+  }
+  return {ok:false,error:'No usable model found. Tried: '
+    +(geminiTried.join(', ')||'none')+'. Last error: '+lastErr};
+}
 
 async function doAsk(){
   const q=$('askq').value.trim();
@@ -929,33 +967,16 @@ async function doAsk(){
   $('askq').value='';
   chatPush('me',q);
   $('askhint').textContent='Thinking...';
-  try{
-    const model=await pickGeminiModel(key.trim());
-    const res=await fetch('https://generativelanguage.googleapis.com/v1beta/'
-      +'models/'+model+':generateContent',{
-      method:'POST',
-      headers:{'Content-Type':'application/json','x-goog-api-key':key.trim()},
-      body:JSON.stringify({
-        system_instruction:{parts:[{text:ASK_SYSTEM}]},
-        contents:[{parts:[{text:'Portfolio data:\n'+askContext(q)+'\n\nQuestion: '+q}]}],
-        generationConfig:{temperature:0.3,maxOutputTokens:900}})});
-    if(res.status===429){
-      chatPush('err','Google\u2019s free daily quota is used up. It resets at midnight Pacific time.');
-    }else if(!res.ok){
-      const b=await res.text();
-      chatPush('err','Gemini returned HTTP '+res.status+'. '+b.slice(0,160));
-      if(res.status===400||res.status===403)
-        $('askhint').innerHTML='<a href="#" onclick="localStorage.removeItem(\'geminikey\');'
-          +'alert(\'Key cleared. Ask again to enter a new one.\');return false">Clear the saved key</a>';
-    }else{
-      const d=await res.json();
-      const c=(d.candidates||[{}])[0];
-      const txt=((c.content||{}).parts||[]).map(p=>p.text||'').join('').trim();
-      chatPush(txt?'ai':'err', txt||('Gemini returned nothing ('
-        +(c.finishReason||'no reason given')+'). Try rephrasing.'));
-    }
-  }catch(e){
-    chatPush('err','Could not reach Gemini: '+e.message);
+  const out=await geminiGenerate(key.trim(),{
+    system_instruction:{parts:[{text:ASK_SYSTEM}]},
+    contents:[{parts:[{text:'Portfolio data:\n'+askContext(q)+'\n\nQuestion: '+q}]}],
+    generationConfig:{temperature:0.3,maxOutputTokens:900}});
+  if(out.ok){chatPush('ai',out.text)}
+  else{
+    chatPush('err',out.error);
+    $('askhint').innerHTML='<a href="#" onclick="localStorage.removeItem(\'geminikey\');'
+      +'geminiModel=null;alert(\'Key cleared. Ask again to enter a new one.\');'
+      +'return false">Clear the saved key</a>';
   }
   if($('askhint').textContent==='Thinking...')
     $('askhint').textContent='Answers use the last digest, so prices can be a day old.'
