@@ -394,20 +394,39 @@ function renderPeaks(){
       <span style="margin-left:10px;color:var(--crimson)">${far} down 40%+</span>
     </div>`
   + '<div class="card" style="padding:0;overflow-x:auto"><table class="pk">'
-  + '<tr><th>Stock</th><th>Now</th><th>Peak</th><th>From peak</th><th>Set</th></tr>'
+  + '<tr><th>Stock</th><th>Now</th><th>Peak</th><th>From peak</th><th>Set</th>'
+  + '<th>Invested</th><th>Gain</th><th>Bought</th></tr>'
   + rows.map(d=>{
       const p=d.off_ath_pct;
       const c=p>=-2?'var(--armed)':(p<=-40?'var(--crimson)':'var(--fired)');
       const sp=d.ath_splits_applied
         ? `<span class="sub" title="split-adjusted">\u00B7s</span>`:'';
-      return `<tr><td><b>${d.ticker}</b>${sp}</td>
+      // Full company name shown as a hover title, since it is too long to sit
+      // in the row on a phone screen without pushing every other column off.
+      const nm=d.name?` title="${d.name.replace(/"/g,'&quot;')}"`:'';
+      const gc=d.pl_pct!==undefined?(d.pl_pct>=0?'var(--armed)':'var(--crimson)'):'';
+      const gain=d.pl_pct!==undefined
+        ? `${d.pl_pct>=0?'+':''}${d.pl_pct.toFixed(1)}%<br>
+           <span class="sub" style="font-size:10.5px">${d.pl_abs>=0?'+':''}${inr(d.pl_abs||0)}</span>`
+        : '<span class="sub">\u2014</span>';
+      const bought=d.buy_date
+        ? d.buy_date
+        : (d.held_basis==='lt_qty'
+            ? '<span class="sub" title="only known to be over a year, exact date missing">1y+</span>'
+            : '<span class="sub">\u2014</span>');
+      return `<tr${nm}><td><b>${d.ticker}</b>${sp}</td>
         <td class="num">${inr(d.price)}</td>
         <td class="num sub">${inr(d.ath)}</td>
         <td class="num" style="color:${c}">${p>=0?'+':''}${p.toFixed(1)}%</td>
-        <td class="sub" style="font-size:11px">${d.ath_date||''}</td></tr>`}).join('')
+        <td class="sub" style="font-size:11px">${d.ath_date||''}</td>
+        <td class="num sub">${d.invested!==undefined?inr(d.invested):'\u2014'}</td>
+        <td class="num" style="color:${gc}">${gain}</td>
+        <td class="sub" style="font-size:11px">${bought}</td></tr>`}).join('')
   + '</table></div>'
   + '<div class="card sub" style="font-size:11.5px">Peaks marked \u00B7s have been '
   + 'adjusted for share splits, so they compare against today\u2019s share count. '
+  + 'Bought shows 1y+ where only the broker\u2019s long-term flag is known, not '
+  + 'the exact date. Hover a name for the full company name where Yahoo has it. '
   + 'A peak is a fact about the price, not a reason to sell.</div>';
 }
 
