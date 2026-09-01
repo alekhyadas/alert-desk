@@ -73,6 +73,15 @@
   .whdr span:nth-child(3){min-width:150px}
   .whdr span:nth-child(4){min-width:118px}
   .whdr span:nth-child(5){min-width:78px;text-align:right}
+  table.pk{width:100%;border-collapse:collapse;font-size:13px;min-width:420px}
+  table.pk th{text-align:left;font-size:10.5px;letter-spacing:.05em;
+    color:var(--muted);font-weight:600;padding:9px 10px;
+    border-bottom:1px solid var(--line);position:sticky;top:0;
+    background:var(--panel)}
+  table.pk td{padding:8px 10px;border-bottom:1px solid var(--line)}
+  table.pk td.num,table.pk th:nth-child(n+2){text-align:right}
+  table.pk td.num{font-family:var(--mono);white-space:nowrap}
+  table.pk tr:last-child td{border-bottom:none}
   @media(max-width:640px){
     .wrow{flex-wrap:wrap;gap:6px}
     .whdr{display:none}
@@ -364,6 +373,97 @@ function sortRows(list){
     if(a===null)return 1;
     if(b===null)return -1;
     return sortDesc?b-a:a-b})}
+
+// --- Peaks -------------------------------------------------------------
+// How far each holding sits below its own highest price. The all-time high
+// from digest.json is split-adjusted, so a stock that has split does not
+// show a fake permanent drawdown against a price it can never reach.
+function renderPeaks(){
+  const L=$('list');
+  const rows=Object.values(digestBy)
+    .filter(d=>d.ath&&d.price&&d.off_ath_pct!==undefined)
+    .sort((a,b)=>b.off_ath_pct-a.off_ath_pct);
+  if(!rows.length){
+    L.innerHTML='<div class="card sub">No peak data yet. Run the digest '
+      +'workflow, which is what writes digest.json.</div>';return}
+  const atPeak=rows.filter(d=>d.off_ath_pct>=-2).length;
+  const far=rows.filter(d=>d.off_ath_pct<=-40).length;
+  L.innerHTML=`<div class="card" style="padding:10px 14px">
+      <span class="sub">${rows.length} priced</span>
+      <span style="margin-left:10px;color:var(--armed)">${atPeak} within 2% of peak</span>
+      <span style="margin-left:10px;color:var(--crimson)">${far} down 40%+</span>
+    </div>`
+  + '<div class="card" style="padding:0;overflow-x:auto"><table class="pk">'
+  + '<tr><th>Stock</th><th>Now</th><th>Peak</th><th>From peak</th><th>Set</th></tr>'
+  + rows.map(d=>{
+      const p=d.off_ath_pct;
+      const c=p>=-2?'var(--armed)':(p<=-40?'var(--crimson)':'var(--fired)');
+      const sp=d.ath_splits_applied
+        ? `<span class="sub" title="split-adjusted">\u00B7s</span>`:'';
+      return `<tr><td><b>${d.ticker}</b>${sp}</td>
+        <td class="num">${inr(d.price)}</td>
+        <td class="num sub">${inr(d.ath)}</td>
+        <td class="num" style="color:${c}">${p>=0?'+':''}${p.toFixed(1)}%</td>
+        <td class="sub" style="font-size:11px">${d.ath_date||''}</td></tr>`}).join('')
+  + '</table></div>'
+  + '<div class="card sub" style="font-size:11.5px">Peaks marked \u00B7s have been '
+  + 'adjusted for share splits, so they compare against today\u2019s share count. '
+  + 'A peak is a fact about the price, not a reason to sell.</div>';
+}
+
+// --- Held --------------------------------------------------------------
+// How long capital has been committed and what it earned while there.
+function renderHeld(){
+  const L=$('list');
+  const rows=Object.values(digestBy).filter(d=>d.price&&d.pl_pct!==undefined)
+    .sort((a,b)=>(b.held_days||0)-(a.held_days||0));
+  if(!rows.length){
+    L.innerHTML='<div class="card sub">Nothing priced yet. Run the digest '
+      +'workflow.</div>';return}
+  const dated=rows.filter(d=>d.held_basis==='buy_date').length;
+  const dead=(digestRaw&&digestRaw.dead_money)||[];
+  const idle=dead.reduce((s,d)=>s+(d.value||0),0);
+  let head=`<div class="card" style="padding:10px 14px">
+      <span class="sub">${dated} of ${rows.length} have a real purchase date</span>`;
+  if(dated<rows.length)
+    head+=`<div class="sub" style="margin-top:4px;font-size:11.5px">
+      The rest fall back to the broker\u2019s long-term quantity, which only
+      proves \u201Cover a year\u201D. Import Zerodha Console\u2019s tax P&amp;L to fill
+      buy_date and every figure here becomes exact.</div>`;
+  head+='</div>';
+  if(dead.length)
+    head+=`<div class="card" style="padding:10px 14px">
+      <b>${inr(idle)}</b> <span class="sub">held over a year, under 8% total return,
+      across ${dead.length} holdings</span></div>`;
+  const deadSet=new Set(dead.map(d=>d.ticker));
+  L.innerHTML=head
+  + '<div class="card" style="padding:0;overflow-x:auto"><table class="pk">'
+  + '<tr><th>Stock</th><th>Held</th><th>Return</th><th>Per year</th><th>Value</th></tr>'
+  + rows.map(d=>{
+      const dm=dead.find(x=>x.ticker===d.ticker);
+      const yrs=d.held_days?d.held_days/365.25:null;
+      const ann=(yrs&&yrs>0&&d.pl_pct!==undefined)
+        ? (Math.pow(1+d.pl_pct/100,1/yrs)-1)*100 : null;
+      const c=d.pl_pct>=0?'var(--armed)':'var(--crimson)';
+      const age=d.held_days
+        ? (d.held_basis==='buy_date'
+            ? (d.held_days>=365?(d.held_days/365.25).toFixed(1)+'y'
+                               :d.held_days+'d')
+            : '1y+')
+        : '<span class="sub">no date</span>';
+      const val=(d.price&&d.qty)?inr(d.price*d.qty):'';
+      return `<tr${deadSet.has(d.ticker)?' style="background:rgba(210,74,79,.07)"':''}>
+        <td><b>${d.ticker}</b>${dm?' <span class="sub">idle</span>':''}</td>
+        <td class="num sub">${age}</td>
+        <td class="num" style="color:${c}">${d.pl_pct>=0?'+':''}${d.pl_pct.toFixed(1)}%</td>
+        <td class="num sub">${ann===null?'':(ann>=0?'+':'')+ann.toFixed(1)+'%'}</td>
+        <td class="num sub">${val}</td></tr>`}).join('')
+  + '</table></div>'
+  + '<div class="card sub" style="font-size:11.5px">Rows shaded red have been held '
+  + 'over a year for under 8% total return. That is a statement about where your '
+  + 'capital has been sitting, not advice to sell it.</div>';
+}
+
 function setTab(t){tab=t;render()}
 
 function accountsOf(list){
@@ -385,7 +485,9 @@ function render(){
   // tabs
   const tabs=[['alerts','Alerts ('+alertsOnly.length+')'],
               ['watch','Watch ('+watchOnly.length+')'],
-              ['all','All']]
+              ['all','All'],
+              ['peaks','\u26F0 Peaks'],
+              ['held','\u23F3 Held']]
     .concat(accountsOf(alerts).map(x=>['acct:'+x,x]));
   $('tabs').innerHTML=tabs.map(([k,lab])=>
     `<div class="tab${tab===k?' on':''}" onclick="setTab('${k.replace(/'/g,"\\'")}')">${lab}</div>`).join('');
@@ -398,6 +500,9 @@ function render(){
     + `<div class="tab${combine?' on':''}" onclick="toggleCombine()"
         title="Merge the same stock held in several accounts">`
     + (combine?'\u25CF ':'') + 'Combine accounts</div>';
+
+  if(tab==='peaks'){renderPeaks();$('savebar').classList.toggle('show',dirty);return}
+  if(tab==='held'){renderHeld();$('savebar').classList.toggle('show',dirty);return}
 
   let show=alerts.map((a,i)=>({a,i}));
   const term=($('q').value||'').trim().toLowerCase();
