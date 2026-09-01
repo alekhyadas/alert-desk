@@ -13,7 +13,19 @@
     --paper:#F4EAE7; --muted:#C29CA1; --crimson:#D24A4F; --crimson-deep:#A03038;
     --armed:#63B98A; --fired:#E0A44C; --paused:#8A6E73;
     --mono:ui-monospace,'Cascadia Code','Segoe UI Mono',Consolas,monospace;
+    /* Figures are set in the system UI sans with tabular figures rather than
+       in a monospace face. Monospace reads as a terminal; every serious
+       broker app sets money in a proportional sans with fixed-width digits,
+       which aligns columns without looking like a log file. */
+    --num:system-ui,-apple-system,'Segoe UI Variable Display','Segoe UI',
+      Roboto,sans-serif;
+    --lift:0 1px 2px rgba(0,0,0,.4), 0 8px 24px -12px rgba(0,0,0,.6);
+    --r:14px;
   }
+  .n,.num,.trigger,.mast .pl,.wrow .cost,.wrow .qty,.wrow .pl,.wrow .val,
+  table.pk td.num,.taxrow span:last-child{
+    font-family:var(--num);font-variant-numeric:tabular-nums lining-nums;
+    letter-spacing:-.01em}
   *{box-sizing:border-box;margin:0}
   body{background:var(--ink);color:var(--paper);
     font:15px/1.5 'Segoe UI',system-ui,sans-serif;
@@ -23,8 +35,8 @@
   .brand{font-size:26px;font-weight:700;letter-spacing:-.02em}
   .brand em{color:var(--crimson);font-style:normal}
   #runline{font-size:12.5px;color:var(--muted)}
-  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;
-    padding:14px;margin-bottom:12px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);
+    padding:16px;margin-bottom:12px;box-shadow:var(--lift)}
   label{display:block;font-size:12px;color:var(--muted);margin:8px 0 3px}
   input,select{width:100%;background:var(--ink);border:1px solid var(--line);
     color:var(--paper);border-radius:8px;padding:9px 10px;font:inherit}
@@ -51,9 +63,24 @@
   .row>*{flex:1}
   .actions{display:flex;gap:8px;flex-wrap:wrap}
   .editgrid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
-  .tab{font-size:12.5px;padding:6px 12px;border-radius:20px;border:1px solid var(--line);
-    background:var(--panel);color:var(--muted);cursor:pointer}
+  .tab{font-size:13px;padding:8px 14px;border-radius:22px;border:1px solid var(--line);
+    background:var(--panel);color:var(--muted);cursor:pointer;white-space:nowrap;
+    transition:background .12s ease,color .12s ease,border-color .12s ease}
+  .tab:hover{color:var(--paper);border-color:var(--paused)}
   .tab.on{background:var(--crimson);border-color:var(--crimson-deep);color:#fff;font-weight:600}
+  .tab.on:hover{color:#fff}
+  /* One scrollable row each. Wrapping these turned nine tabs and six sort
+     buttons into five stacked rows, which is 400px of a phone screen spent
+     on chrome before a single holding appears. */
+  #tabs,#sortbar{display:flex;gap:7px;flex-wrap:nowrap;overflow-x:auto;
+    scrollbar-width:none;-webkit-overflow-scrolling:touch;
+    margin:0 -14px;padding:8px 14px}
+  #tabs::-webkit-scrollbar,#sortbar::-webkit-scrollbar{display:none}
+  #tabs{position:sticky;top:0;z-index:5;background:var(--ink);
+    border-bottom:1px solid var(--line)}
+  #sortbar{align-items:center;padding-top:10px;padding-bottom:2px;
+    margin-bottom:8px}
+  #sortbar>span{flex:0 0 auto}
   .wrow{display:flex;align-items:center;gap:10px;padding:8px 12px;
     border-bottom:1px solid var(--line)}
   .wrow:last-child{border-bottom:0}
@@ -73,19 +100,30 @@
   .whdr span:nth-child(3){min-width:150px}
   .whdr span:nth-child(4){min-width:118px}
   .whdr span:nth-child(5){min-width:78px;text-align:right}
-  table.pk{width:100%;border-collapse:collapse;font-size:13px;min-width:420px}
-  table.pk th{text-align:left;font-size:10.5px;letter-spacing:.05em;
-    color:var(--muted);font-weight:600;padding:9px 10px;
-    border-bottom:1px solid var(--line);position:sticky;top:0;
-    background:var(--panel)}
-  table.pk td{padding:8px 10px;border-bottom:1px solid var(--line)}
+  table.pk{width:100%;border-collapse:separate;border-spacing:0;font-size:13.5px;
+    min-width:460px}
+  table.pk th{text-align:left;font-size:11px;color:var(--muted);font-weight:500;
+    padding:11px 12px;border-bottom:1px solid var(--line);
+    background:var(--panel2);white-space:nowrap}
+  table.pk td{padding:11px 12px;border-bottom:1px solid var(--line)}
   table.pk td.num,table.pk th:nth-child(n+2){text-align:right}
-  table.pk td.num{font-family:var(--mono);white-space:nowrap}
+  table.pk td.num{white-space:nowrap}
   table.pk tr:last-child td{border-bottom:none}
+  table.pk tbody tr:hover td{background:var(--panel2)}
+  /* The name column is pinned so a thumb can scroll the figures sideways
+     without losing track of which holding a row belongs to. */
+  table.pk th:first-child,table.pk td:first-child{
+    position:sticky;left:0;background:var(--panel);z-index:2}
+  table.pk th:first-child{background:var(--panel2);z-index:3}
+  table.pk tbody tr:hover td:first-child{background:var(--panel2)}
   @media(max-width:640px){
     .wrow{flex-wrap:wrap;gap:6px}
     .whdr{display:none}
+    .mast .big{font-size:34px}
+    button,.tab{min-height:40px}
+    .card{padding:14px;border-radius:12px}
   }
+  @media(prefers-reduced-motion:reduce){*{transition:none!important}}
   .searchwrap{display:flex;gap:8px;margin-bottom:10px}
   .msg{border-radius:10px;padding:9px 12px;margin-top:8px;font-size:13.5px;
     line-height:1.5;white-space:pre-wrap}
@@ -93,11 +131,15 @@
   .msg.ai{background:var(--ink);border:1px solid var(--line)}
   .msg.err{background:var(--ink);border:1px solid var(--crimson-deep);color:#F09A9A}
   .searchwrap input{flex:1}
-  .mast{background:linear-gradient(160deg,var(--panel2),var(--panel));
-    border:1px solid var(--line);border-radius:14px;padding:16px 18px;margin-bottom:12px}
-  .mast .big{font-family:'Bricolage Grotesque',sans-serif;font-size:32px;
-    font-weight:700;letter-spacing:-.02em;line-height:1.1}
-  .mast .pl{font-family:var(--mono);font-size:16px;margin-left:10px}
+  .mast{background:
+      radial-gradient(120% 140% at 0% 0%,rgba(210,74,79,.16),transparent 58%),
+      linear-gradient(160deg,var(--panel2),var(--panel));
+    border:1px solid var(--line);border-radius:18px;padding:20px;
+    margin-bottom:12px;box-shadow:var(--lift)}
+  .mast .big{font-family:'Bricolage Grotesque',sans-serif;font-size:40px;
+    font-weight:700;letter-spacing:-.03em;line-height:1.05;
+    font-variant-numeric:tabular-nums lining-nums}
+  .mast .pl{font-size:16px;margin-left:10px;font-weight:600}
   .mast .sub2{font-size:12px;color:var(--muted);margin-top:4px}
   .weight{display:flex;height:8px;border-radius:6px;overflow:hidden;margin-top:14px;
     background:var(--ink)}
@@ -125,6 +167,8 @@
   #toast{position:fixed;top:12px;left:50%;transform:translateX(-50%);
     background:var(--panel2);border:1px solid var(--line);border-radius:10px;
     padding:10px 16px;font-size:14px;display:none;max-width:92vw;z-index:9}
+  .ttl{font-family:'Bricolage Grotesque',sans-serif;font-size:17px;
+    font-weight:700;letter-spacing:-.01em}
   .err{color:#F09A9A}
   details summary{cursor:pointer;color:var(--muted);font-size:13px}
   a{color:var(--crimson)}
@@ -183,9 +227,8 @@
     <input id="q" placeholder="Find a stock, account or note" oninput="render()" autocomplete="off">
     <button class="small" onclick="$('q').value='';render()">Clear</button>
   </div>
-  <div id="tabs" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px"></div>
-  <div id="sortbar" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px;
-    align-items:center"></div>
+  <div id="tabs"></div>
+  <div id="sortbar"></div>
   <div id="sorts" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px;align-items:center"></div>
   <div id="list"></div>
   <div class="card">
@@ -378,6 +421,17 @@ function sortRows(list){
 // How far each holding sits below its own highest price. The all-time high
 // from digest.json is split-adjusted, so a stock that has split does not
 // show a fake permanent drawdown against a price it can never reach.
+
+// Dates in a dense table need to be short and must never wrap. "2025-10-21"
+// breaks across three lines in a narrow column and reads like a log entry.
+function shortDate(s){
+  if(!s)return '';
+  const d=new Date(s);
+  if(isNaN(d))return String(s).replace(/\s+/g,'\u00A0');
+  return d.toLocaleDateString('en-IN',{month:'short',year:'2-digit'})
+          .replace(/\s+/g,'\u00A0');
+}
+
 function renderPeaks(){
   const L=$('list');
   const rows=Object.values(digestBy)
@@ -410,7 +464,7 @@ function renderPeaks(){
            <span class="sub" style="font-size:10.5px">${d.pl_abs>=0?'+':''}${inr(d.pl_abs||0)}</span>`
         : '<span class="sub">\u2014</span>';
       const bought=d.buy_date
-        ? d.buy_date
+        ? shortDate(d.buy_date)
         : (d.held_basis==='lt_qty'
             ? '<span class="sub" title="only known to be over a year, exact date missing">1y+</span>'
             : '<span class="sub">\u2014</span>');
@@ -418,10 +472,10 @@ function renderPeaks(){
         <td class="num">${inr(d.price)}</td>
         <td class="num sub">${inr(d.ath)}</td>
         <td class="num" style="color:${c}">${p>=0?'+':''}${p.toFixed(1)}%</td>
-        <td class="sub" style="font-size:11px">${d.ath_date||''}</td>
+        <td class="sub num" style="font-size:11.5px">${shortDate(d.ath_date)}</td>
         <td class="num sub">${d.invested!==undefined?inr(d.invested):'\u2014'}</td>
         <td class="num" style="color:${gc}">${gain}</td>
-        <td class="sub" style="font-size:11px">${bought}</td></tr>`}).join('')
+        <td class="sub num" style="font-size:11.5px">${bought}</td></tr>`}).join('')
   + '</table></div>'
   + '<div class="card sub" style="font-size:11.5px">Peaks marked \u00B7s have been '
   + 'adjusted for share splits, so they compare against today\u2019s share count. '
@@ -473,7 +527,7 @@ function renderHeld(){
       const val=(d.price&&d.qty)?inr(d.price*d.qty):'';
       return `<tr${deadSet.has(d.ticker)?' style="background:rgba(210,74,79,.07)"':''}>
         <td><b>${d.ticker}</b>${dm?' <span class="sub">idle</span>':''}</td>
-        <td class="num sub">${age}</td>
+        <td class="num sub" style="white-space:nowrap">${age}</td>
         <td class="num" style="color:${c}">${d.pl_pct>=0?'+':''}${d.pl_pct.toFixed(1)}%</td>
         <td class="num sub">${ann===null?'':(ann>=0?'+':'')+ann.toFixed(1)+'%'}</td>
         <td class="num sub">${val}</td></tr>`}).join('')
@@ -481,6 +535,143 @@ function renderHeld(){
   + '<div class="card sub" style="font-size:11.5px">Rows shaded red have been held '
   + 'over a year for under 8% total return. That is a statement about where your '
   + 'capital has been sitting, not advice to sell it.</div>';
+}
+
+
+// --- Leaks ---------------------------------------------------------------
+// Money going missing quietly, each line in rupees rather than in advice.
+// The two rates are measured from six years of your own Zerodha statements,
+// not estimated: 0.173% median in trade charges across 185 delivery exits,
+// plus a flat Rs 15.93 depository fee per scrip per sell day. The flat fee
+// is why this matters at all, because it does not scale with position size.
+const DP_FEE=15.93, TRADE_RATE=0.00173, LTCG_EXEMPT=125000;
+
+function exitCost(value){return value*TRADE_RATE+DP_FEE}
+
+function renderCosts(){
+  const L=$('list');
+  const D=digestRaw;
+  if(!D){L.innerHTML='<div class="card sub">Run the digest workflow first. '
+    +'This view reads digest.json.</div>';return}
+  const ents=(D.entries||[]).filter(e=>e.price&&e.qty);
+  const cards=[];
+
+  // 1. The flat depository fee, which punishes small positions
+  const sized=ents.map(e=>({t:e.ticker,v:e.price*e.qty}))
+    .map(x=>Object.assign(x,{c:exitCost(x.v),pct:exitCost(x.v)/x.v*100}))
+    .sort((a,b)=>b.pct-a.pct);
+  const painful=sized.filter(x=>x.pct>=1);
+  if(painful.length){
+    const raise=painful.reduce((s,x)=>s+x.v,0);
+    const burn=painful.reduce((s,x)=>s+x.c,0);
+    cards.push(`<div class="card">
+      <div class="ttl">Small positions cost a lot to leave</div>
+      <p class="sub" style="margin:6px 0 10px">The depository charges a flat
+      ${inr(DP_FEE,2)} per stock per sell day. It does not scale, so it lands
+      hardest on the smallest holdings. Selling these ${painful.length} would
+      raise <b>${inr(raise)}</b> and burn <b>${inr(burn)}</b> doing it.</p>
+      <div style="overflow-x:auto"><table class="pk">
+      <tr><th>Stock</th><th>Worth</th><th>Costs to sell</th><th>Of position</th></tr>
+      ${painful.slice(0,12).map(x=>`<tr><td><b>${x.t}</b></td>
+        <td class="num">${inr(x.v)}</td>
+        <td class="num sub">${inr(x.c)}</td>
+        <td class="num" style="color:var(--crimson)">${x.pct.toFixed(1)}%</td></tr>`).join('')}
+      </table></div>
+      <p class="sub" style="margin-top:10px">Selling one ${inr(15000)} holding
+      frees the same cash for about ${inr(exitCost(15000))}. Bundling several
+      sales of the same stock into one day also pays the fee once, not
+      once per order.</p></div>`);
+  }
+
+  // 2. The allowance that expires unclaimed every 31 March
+  const acc=D.per_account_tax||{};
+  const names=Object.keys(acc);
+  if(names.length){
+    const left=names.reduce((s,k)=>s+(acc[k].exempt_left||0),0);
+    const gains=names.reduce((s,k)=>s+Math.max(0,acc[k].lt_net||0),0);
+    const usable=Math.min(left,gains);
+    cards.push(`<div class="card">
+      <div class="ttl">Tax-free allowance going unused</div>
+      <p class="sub" style="margin:6px 0 10px">Every PAN gets ${inr(LTCG_EXEMPT)}
+      of long-term gains free of tax each financial year. Across
+      ${names.length} accounts that is <b>${inr(LTCG_EXEMPT*names.length)}</b> a
+      year. Whatever is unused on 31 March is gone, it does not carry forward.</p>
+      <div style="overflow-x:auto"><table class="pk">
+      <tr><th>Account</th><th>Holdings</th><th>Long-term gain</th><th>Allowance left</th></tr>
+      ${names.sort((a,b)=>(acc[b].value||0)-(acc[a].value||0)).map(k=>{
+        const a=acc[k];
+        return `<tr><td><b>${k}</b></td>
+          <td class="num sub">${inr(a.value||0)}</td>
+          <td class="num">${inr(a.lt_net||0)}</td>
+          <td class="num" style="color:var(--armed)">${inr(a.exempt_left||0)}</td></tr>`
+        }).join('')}
+      </table></div>
+      <p class="sub" style="margin-top:10px">You currently hold
+      <b>${inr(gains)}</b> of unrealised long-term gain against
+      <b>${inr(left)}</b> of unused allowance, so up to <b>${inr(usable)}</b>
+      could be realised tax free this year. Whether to realise any of it is
+      your call and worth putting to your CA.</p></div>`);
+  }
+
+  // 3. Positions a few weeks short of the lower tax rate
+  const tx=D.tax||{}, soon=tx.approaching||[];
+  if(soon.length){
+    const save=soon.reduce((s,r)=>s+(r[3]||0),0);
+    cards.push(`<div class="card">
+      <div class="ttl">Weeks away from a lower tax rate</div>
+      <p class="sub" style="margin:6px 0 10px">Held past twelve months, gains
+      are taxed at 12.5% instead of 20%. Selling these before they cross costs
+      about <b>${inr(save)}</b> more in tax than waiting.</p>
+      <div style="overflow-x:auto"><table class="pk">
+      <tr><th>Stock</th><th>Days left</th><th>Gain</th><th>Extra tax if sold now</th></tr>
+      ${soon.slice(0,10).map(r=>`<tr><td><b>${r[0]}</b></td>
+        <td class="num">${r[1]}</td>
+        <td class="num sub">${inr(r[2])}</td>
+        <td class="num" style="color:var(--fired)">${inr(r[3])}</td></tr>`).join('')}
+      </table></div></div>`);
+  }
+
+  // 4. Holdings the system cannot see at all
+  const blind=(D.entries||[]).filter(e=>!e.price);
+  const nodate=ents.filter(e=>!e.buy_date).length;
+  if(blind.length||nodate){
+    cards.push(`<div class="card">
+      <div class="ttl">Gaps that hide money</div>
+      ${blind.length?`<p class="sub" style="margin:6px 0">
+        <b>${blind.length} holdings return no price</b>, so they are missing from
+        every total on this dashboard: ${blind.slice(0,10).map(e=>e.ticker).join(', ')}.
+        Usually a wrong ticker.</p>`:''}
+      ${nodate?`<p class="sub" style="margin:6px 0">
+        <b>${nodate} holdings have no purchase date</b>, so they are excluded from
+        every tax figure and count as short term, which understates the
+        allowance above. Groww and Dhan transaction reports would fill these.</p>`:''}
+      </div>`);
+  }
+
+  // 5. Income already arriving, which is easy to forget is there
+  const dv=D.dividends||{};
+  if(dv.ttm_total){
+    cards.push(`<div class="card">
+      <div class="ttl">Dividends collected</div>
+      <p class="sub" style="margin:6px 0">About <b>${inr(dv.ttm_total)}</b> over
+      the last twelve months from ${dv.payers} holdings. Dividends are taxed at
+      your slab rate and TDS applies above ${inr(5000)} per company per year,
+      so this belongs in your return whether or not it felt like income.</p>
+      ${(dv.top||[]).length?`<div style="overflow-x:auto"><table class="pk">
+        <tr><th>Stock</th><th>Received</th><th>Yield now</th><th>On what you paid</th></tr>
+        ${dv.top.slice(0,6).map(d=>`<tr><td><b>${d.ticker}</b></td>
+          <td class="num">${inr(d.income)}</td>
+          <td class="num sub">${d.yield?d.yield.toFixed(1)+'%':''}</td>
+          <td class="num" style="color:var(--armed)">${d.yoc?d.yoc.toFixed(1)+'%':''}</td>
+        </tr>`).join('')}</table></div>`:''}
+      </div>`);
+  }
+
+  L.innerHTML=cards.join('')
+    +`<div class="card sub" style="font-size:11.5px">Charge rates are measured
+      from your own Zerodha statements, 2021 to 2026. Tax rates are as they
+      stand today and change with each Budget. Everything here is arithmetic
+      on your own numbers, not advice to buy or sell anything.</div>`;
 }
 
 function setTab(t){tab=t;render()}
@@ -506,7 +697,8 @@ function render(){
               ['watch','Watch ('+watchOnly.length+')'],
               ['all','All'],
               ['peaks','\u26F0 Peaks'],
-              ['held','\u23F3 Held']]
+              ['held','\u23F3 Held'],
+              ['costs','\u20B9 Leaks']]
     .concat(accountsOf(alerts).map(x=>['acct:'+x,x]));
   $('tabs').innerHTML=tabs.map(([k,lab])=>
     `<div class="tab${tab===k?' on':''}" onclick="setTab('${k.replace(/'/g,"\\'")}')">${lab}</div>`).join('');
@@ -520,8 +712,9 @@ function render(){
         title="Merge the same stock held in several accounts">`
     + (combine?'\u25CF ':'') + 'Combine accounts</div>';
 
-  if(tab==='peaks'){renderPeaks();$('savebar').classList.toggle('show',dirty);return}
-  if(tab==='held'){renderHeld();$('savebar').classList.toggle('show',dirty);return}
+  const analysis={peaks:renderPeaks,held:renderHeld,costs:renderCosts};
+  $('sortbar').style.display=analysis[tab]?'none':'';
+  if(analysis[tab]){analysis[tab]();$('savebar').classList.toggle('show',dirty);return}
 
   let show=alerts.map((a,i)=>({a,i}));
   const term=($('q').value||'').trim().toLowerCase();
@@ -960,9 +1153,24 @@ function renderDigest(d){
       <span class="trigger" style="font-size:13px">${e.currency}${fmt(e.price)}</span>${day}<br>
       ${bands}${extra.length?`<br><span class="sub">${extra.join(' \u00B7 ')}</span>`:''}
     </div>`});
-  box.innerHTML=`<div class="card">
-    <h2 style="font-size:16px">Daily digest \u00B7 <span class="sub">${d.date}</span></h2>
-    <div style="margin-top:10px">${rows}</div>
+  // This used to print all 105 holdings above the masthead and the tabs, so
+  // reaching any control on a phone meant scrolling past the whole portfolio.
+  // The same rows are available below in the tabs, better organised, so the
+  // card is now a one-line status strip with the detail folded away.
+  const priced=d.entries.filter(e=>e.price).length;
+  const up=d.entries.filter(e=>(e.day_pct||0)>0).length;
+  const dn=d.entries.filter(e=>(e.day_pct||0)<0).length;
+  const blind=d.entries.length-priced;
+  box.innerHTML=`<div class="card" style="padding:12px 16px">
+    <div style="display:flex;gap:14px;align-items:baseline;flex-wrap:wrap">
+      <b style="font-family:'Bricolage Grotesque',sans-serif">Prices from ${d.date}</b>
+      <span class="sub n">${priced} priced</span>
+      <span class="sub n" style="color:var(--armed)">${up} up</span>
+      <span class="sub n" style="color:var(--crimson)">${dn} down</span>
+      ${blind?`<span class="sub n" style="color:var(--fired)">${blind} no price</span>`:''}
+    </div>
+    <details style="margin-top:8px"><summary class="sub">Every holding, as the digest saw it</summary>
+      <div style="margin-top:10px">${rows}</div></details>
   </div>`}
 
 // ---------- ask your portfolio ----------
