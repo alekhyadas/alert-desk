@@ -192,6 +192,17 @@
   .planline{display:flex;justify-content:space-between;align-items:baseline;
     gap:12px;padding:5px 0;font-size:13.5px}
   .planline>span{color:var(--muted)}
+  .pick{cursor:pointer;font-size:17px;line-height:1;color:var(--muted);
+    padding:2px 2px 0 0}
+  .pick:hover{color:var(--armed)}
+  .chart{font-size:11px;color:var(--muted);border:1px solid var(--line);
+    border-radius:5px;padding:1px 7px;text-decoration:none}
+  .chart:hover{color:var(--paper);border-color:var(--paused)}
+  .bulkbar{padding:11px 14px}
+  .mgrid{display:grid;grid-template-columns:1fr;gap:16px}
+  @media(min-width:620px){.mgrid{grid-template-columns:1fr 1fr}}
+  a.newsrow{display:block;text-decoration:none;color:var(--paper)}
+  a.newsrow:hover{border-color:var(--paused)}
   .err{color:#F09A9A}
   details summary{cursor:pointer;color:var(--muted);font-size:13px}
   a{color:var(--crimson)}
@@ -768,6 +779,54 @@ function planTotals(rows){
           net:gross-exit-tax,byPerson,soon,waitSaves};
 }
 
+// --- Bulk actions ---------------------------------------------------------
+// With 149 rows, pausing or re-arming a group one card at a time is the
+// slowest thing in this interface. Kite users ask for exactly this.
+let bulkSel=new Set();
+function bulkToggle(i,ev){
+  if(ev)ev.stopPropagation();
+  bulkSel.has(i)?bulkSel.delete(i):bulkSel.add(i);render()}
+function bulkAll(list){list.forEach(i=>bulkSel.add(i));render()}
+function bulkNone(){bulkSel.clear();render()}
+function bulkApply(what){
+  const idx=[...bulkSel];
+  if(!idx.length)return;
+  if(what==='delete'&&!confirm(`Delete ${idx.length} alert(s)? This cannot be undone once you Save.`))return;
+  if(what==='delete'){
+    idx.sort((a,b)=>b-a).forEach(i=>alerts.splice(i,1));
+    bulkSel.clear(); markDirty(); toast(`${idx.length} staged for deletion`); render(); return}
+  idx.forEach(i=>{
+    const a=alerts[i];
+    if(what==='pause')a.enabled=false;
+    if(what==='resume')a.enabled=true;
+    if(what==='rearm'){const f=firedEntry(a); if(f)rearm.add(f.key)}
+  });
+  markDirty(); toast(`${idx.length} updated, press Save to commit`); render()}
+
+function bulkBar(visible){
+  const n=bulkSel.size;
+  const fired=visible.filter(i=>firedEntry(alerts[i]));
+  return `<div class="card bulkbar">
+    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+      <b>${n?`${n} selected`:'Select several at once'}</b>
+      <button class="small" onclick="bulkAll([${visible}])">All ${visible.length} shown</button>
+      ${fired.length?`<button class="small" onclick="bulkAll([${fired}])">All ${fired.length} fired</button>`:''}
+      ${n?`<button class="small" onclick="bulkNone()">Clear</button>`:''}
+    </div>
+    ${n?`<div class="actions" style="margin-top:9px">
+      <button class="small" onclick="bulkApply('pause')">Pause</button>
+      <button class="small" onclick="bulkApply('resume')">Resume</button>
+      <button class="small" onclick="bulkApply('rearm')">Re-arm</button>
+      <button class="small" onclick="bulkApply('delete')" style="color:var(--crimson)">Delete</button>
+    </div>`:''}</div>`}
+
+// Deep link straight to a live chart. TradingView takes a deterministic
+// NSE:TICKER symbol, so it works for every row without a per-stock slug.
+function chartUrl(a){
+  const ex=a.exchange==='BSE'?'BSE':a.exchange==='US'?'':'NSE';
+  return ex?`https://www.tradingview.com/chart/?symbol=${ex}%3A${encodeURIComponent(a.ticker)}`
+           :`https://www.tradingview.com/chart/?symbol=${encodeURIComponent(a.ticker)}`}
+
 function planToggle(t){planSel.has(t)?planSel.delete(t):planSel.add(t);renderPlan()}
 function planClear(){planSel.clear();renderPlan()}
 function planPick(kind){
@@ -853,6 +912,121 @@ function renderPlan(){
   L.innerHTML=head+body;
 }
 
+
+// --- Month in review ------------------------------------------------------
+// "Up 48%" is not an achievement on its own. Up 48% while the index did 60%
+// is underperformance wearing a green number. Every figure here is measured
+// against what the market did over the same days, and money paid in during
+// the month is stripped out so a buying month does not read as a gain.
+const IDX_LABEL={nifty50:'Nifty 50',nifty500:'Nifty 500',
+                 midcap:'Midcap 100',smallcap:'Smallcap 100'};
+
+function bars(items,w,h){
+  // A bar per series, scaled to the largest absolute move so a small
+  // difference is not exaggerated into a dramatic one.
+  const max=Math.max(1,...items.map(i=>Math.abs(i.v)));
+  const bw=Math.min(56,(w-20)/items.length-12), gap=12;
+  const mid=h-24;
+  return `<svg viewBox="0 0 ${w} ${h}" width="100%" height="${h}"
+    role="img" aria-label="Portfolio against the indices">
+    <line x1="0" y1="${mid}" x2="${w}" y2="${mid}" stroke="var(--line)"/>
+    ${items.map((it,n)=>{
+      const x=10+n*(bw+gap);
+      const ht=Math.max(2,Math.abs(it.v)/max*(mid-16));
+      const up=it.v>=0;
+      const y=up?mid-ht:mid;
+      return `<rect x="${x}" y="${y}" width="${bw}" height="${ht}" rx="4"
+          fill="${it.me?'var(--crimson)':(up?'var(--armed)':'var(--fired)')}"
+          opacity="${it.me?1:.65}"/>
+        <text x="${x+bw/2}" y="${up?y-6:y+ht+14}" text-anchor="middle"
+          font-size="12" font-weight="600"
+          fill="${it.me?'var(--crimson)':'var(--paper)'}">${it.v>=0?'+':''}${it.v.toFixed(1)}%</text>
+        <text x="${x+bw/2}" y="${h-6}" text-anchor="middle" font-size="10.5"
+          fill="var(--muted)">${it.k}</text>`}).join('')}
+  </svg>`}
+
+function renderMonth(){
+  const L=$('list'), m=digestRaw&&digestRaw.month;
+  if(!m){
+    L.innerHTML=`<div class="card"><div class="ttl">Not enough history yet</div>
+      <p class="sub" style="margin-top:6px">This needs about a month of daily
+      digest runs before it can compare anything. It fills itself in as
+      portfolio_history.csv grows, and index levels are recorded from today
+      onward, so the comparison gets more honest each week.</p></div>`;return}
+  const idx=Object.entries(m.indices||{});
+  const beat=idx.filter(([,v])=>m.return_pct>v).length;
+  const items=[{k:'You',v:m.return_pct,me:true}]
+    .concat(idx.map(([k,v])=>({k:IDX_LABEL[k]||k,v})));
+  const verdict=idx.length
+    ? (beat===idx.length?'ahead of every index'
+      :beat===0?'behind every index'
+      :`ahead of ${beat} of ${idx.length}`)
+    : 'no index levels recorded yet';
+  L.innerHTML=`
+  <div class="card">
+    <div class="sub">${m.from} to ${m.to}</div>
+    <div class="ttl" style="font-size:24px;margin-top:2px">
+      Your portfolio ${m.return_pct>=0?'gained':'lost'}
+      <span style="color:${m.return_pct>=0?'var(--armed)':'var(--crimson)'}">${Math.abs(m.return_pct).toFixed(1)}%</span>,
+      ${verdict}</div>
+    ${m.added?`<div class="sub" style="margin-top:6px">${inr(m.added)} was paid
+      in during this period and has been excluded, so this is performance
+      rather than deposits.</div>`:''}
+    <div style="margin-top:14px">${bars(items,520,150)}</div>
+  </div>
+  <div class="card">
+    <div class="ttl">What moved the needle</div>
+    <div class="mgrid">
+      <div><div class="sub" style="margin-bottom:6px">Biggest contributors</div>
+        ${m.best.map(b=>`<div class="planline"><span>${b.ticker}</span>
+          <b class="n" style="color:var(--armed)">+${inr(Math.abs(b.pl_abs))}</b></div>`).join('')}</div>
+      <div><div class="sub" style="margin-bottom:6px">Biggest drags</div>
+        ${m.worst.map(b=>`<div class="planline"><span>${b.ticker}</span>
+          <b class="n" style="color:${b.pl_abs<0?'var(--crimson)':'var(--muted)'}">${b.pl_abs<0?'\u2212':'+'}${inr(Math.abs(b.pl_abs))}</b></div>`).join('')}</div>
+    </div>
+    <div class="sub" style="margin-top:10px">${m.winners} holdings in profit,
+      ${m.losers} at a loss.</div>
+  </div>
+  <div class="card sub" style="font-size:11.5px">Index levels come from Yahoo
+    and are recorded once a day, so this compares closes rather than intraday
+    moves. Beating an index over one month is noise; the number is here so the
+    trend is visible over years, not to be acted on monthly.</div>`;
+}
+
+// --- News -----------------------------------------------------------------
+// research_watch already fetches and scores headlines for every holding and
+// writes them to research.json. Until now the dashboard never showed them.
+function renderNews(){
+  const L=$('list');
+  const items=[];
+  Object.entries(researchBy||{}).forEach(([tk,r])=>{
+    (r.recent_headlines||[]).forEach(h=>{
+      items.push({tk, title:h.title||h, link:h.link||'', when:h.when||h.date||'',
+                  label:h.label||'', dir:h.direction||''})});
+  });
+  if(!items.length){
+    L.innerHTML=`<div class="card"><div class="ttl">No headlines yet</div>
+      <p class="sub" style="margin-top:6px">This reads research.json, written by
+      the research workflow each morning. Run it once and headlines appear here.
+      Yahoo's feed is thin on Indian smallcaps, so quiet does not always mean
+      nothing happened.</p></div>`;return}
+  items.sort((a,b)=>String(b.when).localeCompare(String(a.when)));
+  const tone=d=>d==='good'?'var(--armed)':d==='bad'?'var(--crimson)':'var(--muted)';
+  L.innerHTML=`<div class="card" style="padding:12px 16px">
+      <b>${items.length} headlines</b>
+      <span class="sub">across ${new Set(items.map(i=>i.tk)).size} holdings,
+      newest first</span></div>`
+    + items.slice(0,60).map(i=>`
+      <a class="card newsrow" href="${i.link||'#'}" ${i.link?'target="_blank" rel="noopener"':''}>
+        <div style="display:flex;gap:10px;align-items:baseline;flex-wrap:wrap">
+          <b style="font-family:'Bricolage Grotesque',sans-serif">${i.tk}</b>
+          ${i.label?`<span class="ex" style="color:${tone(i.dir)};border-color:${tone(i.dir)}">${i.label}</span>`:''}
+          <span class="sub" style="margin-left:auto;font-size:11.5px">${i.when||''}</span>
+        </div>
+        <div style="margin-top:5px;font-size:14px;line-height:1.45">${i.title}</div>
+      </a>`).join('');
+}
+
 function setTab(t){tab=t;render()}
 
 function accountsOf(list){
@@ -878,7 +1052,9 @@ function render(){
               ['peaks','\u26F0 Peaks'],
               ['held','\u23F3 Held'],
               ['costs','\u20B9 Leaks'],
-              ['plan','\u{1F9EE} Sell planner']]
+              ['plan','\u{1F9EE} Sell planner'],
+              ['month','\u{1F4C6} Month'],
+              ['news','\u{1F4F0} News']]
     .concat(accountsOf(alerts).map(x=>['acct:'+x,x]));
   $('tabs').innerHTML=tabs.map(([k,lab])=>
     `<div class="tab${tab===k?' on':''}" onclick="setTab('${k.replace(/'/g,"\\'")}')">${lab}</div>`).join('');
@@ -893,7 +1069,7 @@ function render(){
     + (combine?'\u25CF ':'') + 'Combine accounts</div>';
 
   const analysis={peaks:renderPeaks,held:renderHeld,costs:renderCosts,
-                  plan:renderPlan};
+                  plan:renderPlan,month:renderMonth,news:renderNews};
   $('sortbar').style.display=analysis[tab]?'none':'';
   if(analysis[tab]){analysis[tab]();$('savebar').classList.toggle('show',dirty);return}
 
@@ -938,6 +1114,9 @@ function render(){
   // Alert cards sit in a grid so a wide screen shows two or three abreast
   // instead of one full-width card per holding down an endless page.
   if(ar.length){
+    const bb=document.createElement('div');
+    bb.innerHTML=bulkBar(ar.map(x=>x.i));
+    L.appendChild(bb.firstElementChild);
     const grid=document.createElement('div'); grid.className='alertgrid';
     ar.forEach(({a,i})=>grid.appendChild(alertCard(a,i)));
     L.appendChild(grid);
@@ -989,7 +1168,11 @@ function alertCard(a,i){
   const t=trigger(a);
   card.innerHTML=`
     <div class="top">
+      <span class="pick" onclick="bulkToggle(${i},event)"
+        title="Select for a bulk action">${bulkSel.has(i)?'\u2611':'\u2610'}</span>
       <span class="tk">${a.ticker}</span><span class="ex">${a.exchange}</span>
+      <a class="chart" href="${chartUrl(a)}" target="_blank" rel="noopener"
+        onclick="event.stopPropagation()" title="Open the live chart">chart</a>
       <span class="chip ${status}">${status.toUpperCase()}</span>
     </div>
     ${(a.account||a.broker)?`<div class="sub" style="margin-top:2px">Held in: <span style="color:var(--paper)">${[a.account,a.broker].filter(Boolean).join(' / ')}</span></div>`:''}
