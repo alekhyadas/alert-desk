@@ -5,6 +5,11 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#160A0C">
 <title>Alert Desk</title>
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Alert Desk">
+<link rel="manifest" href="data:application/manifest+json,%7B%22name%22%3A%22Alert%20Desk%22%2C%22short_name%22%3A%22Alert%20Desk%22%2C%22display%22%3A%22standalone%22%2C%22background_color%22%3A%22%23160A0C%22%2C%22theme_color%22%3A%22%23160A0C%22%2C%22start_url%22%3A%22.%22%7D">
+<link rel="apple-touch-icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 180 180'%3E%3Crect width='180' height='180' rx='40' fill='%23160A0C'/%3E%3Ctext x='90' y='122' font-family='Segoe UI,sans-serif' font-size='96' font-weight='700' fill='%23D24A4F' text-anchor='middle'%3EA%3C/text%3E%3C/svg%3E">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,300..800&display=swap" rel="stylesheet">
 <style>
@@ -30,6 +35,21 @@
   body{background:var(--ink);color:var(--paper);
     font:15px/1.5 'Segoe UI',system-ui,sans-serif;
     padding:max(14px,env(safe-area-inset-top)) 14px 90px}
+  /* A 760px column stranded in a 1440px window wastes two thirds of a
+     desktop screen. Wide viewports get a two-column shell: the portfolio
+     summary parks in a sticky rail on the left while the list scrolls. */
+  @media(min-width:1080px){
+    body{max-width:1280px!important}
+    #shell{display:grid;grid-template-columns:380px minmax(0,1fr);
+      gap:20px;align-items:start}
+    #rail{position:sticky;top:14px}
+    #tabs{top:0}
+    .alertgrid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+    .alertgrid>.card{margin-bottom:0}
+  }
+  @media(min-width:1500px){
+    .alertgrid{grid-template-columns:repeat(3,minmax(0,1fr))}
+  }
   h1,h2,.brand{font-family:'Bricolage Grotesque',sans-serif}
   header{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;margin-bottom:14px}
   .brand{font-size:26px;font-weight:700;letter-spacing:-.02em}
@@ -169,10 +189,14 @@
     padding:10px 16px;font-size:14px;display:none;max-width:92vw;z-index:9}
   .ttl{font-family:'Bricolage Grotesque',sans-serif;font-size:17px;
     font-weight:700;letter-spacing:-.01em}
+  .planline{display:flex;justify-content:space-between;align-items:baseline;
+    gap:12px;padding:5px 0;font-size:13.5px}
+  .planline>span{color:var(--muted)}
   .err{color:#F09A9A}
   details summary{cursor:pointer;color:var(--muted);font-size:13px}
   a{color:var(--crimson)}
   @media(min-width:700px){body{max-width:760px;margin:0 auto}}
+  @media(min-width:1080px){body{margin:0 auto}}
   @media(prefers-reduced-motion:no-preference){
     .card{transition:border-color .15s}
     .card.dirty{border-color:var(--crimson-deep)}
@@ -204,6 +228,8 @@
 </div>
 
 <div id="app" style="display:none">
+ <div id="shell">
+  <div id="rail">
   <div id="digestcard"></div>
   <div id="masthead"></div>
   <div id="perfcard"></div>
@@ -223,6 +249,8 @@
       </div>
     </details>
   </div>
+  </div>
+  <div id="work">
   <div class="searchwrap">
     <input id="q" placeholder="Find a stock, account or note" oninput="render()" autocomplete="off">
     <button class="small" onclick="$('q').value='';render()">Clear</button>
@@ -246,7 +274,8 @@
     <div class="editgrid" style="margin-top:8px">
       <div><label>Ticker</label><input id="n-tk" placeholder="RELIANCE" autocapitalize="characters"></div>
       <div><label>Exchange</label><select id="n-ex"><option>NSE</option><option>BSE</option><option>US</option></select></div>
-      <div><label>Type</label><select id="n-ty" onchange="refToggle()"><option value="price">price target</option><option value="percent">percent move</option><option value="watch">watch only (digest, no alerts)</option></select></div>
+      <div><label>Type</label><select id="n-ty" onchange="refToggle()"><option value="price">price target</option><option value="percent">percent move</option><option value="trail">trailing stop (protects a winner)</option>
+      <option value="watch">watch only (digest, no alerts)</option></select></div>
       <div><label>Direction</label><select id="n-di"><option>above</option><option>below</option></select></div>
       <div><label id="n-val-label">Target price</label><input id="n-val" inputmode="decimal" placeholder="3200"></div>
       <div id="n-ref-wrap" style="display:none"><label>Reference price</label><input id="n-ref" inputmode="decimal" placeholder="e.g. your buy price"></div>
@@ -273,6 +302,8 @@
     during market hours). Re-arming a fired alert also takes effect on Save.
     <div style="margin-top:8px"><a href="#" onclick="forget();return false">Disconnect and forget token</a></div>
   </div>
+  </div>
+ </div>
 </div>
 
 <div id="savebar"><button class="primary" style="min-width:220px" onclick="saveAll()" id="savebtn">Save changes to repo</button></div>
@@ -341,8 +372,18 @@ function trigger(a){
   if(a.alert_type==='watch')return null;
   const v=parseFloat(a.alert_value);
   if(a.alert_type==='price')return v;
+  // A trailing stop has no fixed target. It sits v% under the highest price
+  // seen since arming, which lives in alerts_state.json and moves daily.
+  if(a.alert_type==='trail'){
+    const pk=trailPeak(a);
+    return pk?pk*(1-v/100):null}
   const r=isFinite(parseFloat(a.reference_price))?parseFloat(a.reference_price):parseFloat(a.avg_cost);
   return a.direction==='above'?r*(1+v/100):r*(1-v/100)}
+function trailPeak(a){
+  const key=a.ticker+(a.exchange==='NSE'?'.NS':a.exchange==='BSE'?'.BO':'')
+    +'|trail|'+parseFloat(a.alert_value);
+  const rec=(state&&state._trail_peaks)?state._trail_peaks[key]:null;
+  return rec&&rec.peak?rec.peak:null}
 function cur(a){return a.exchange==='US'?'$':'\u20B9'}
 function fmt(n){return (n!==null&&n!==undefined&&isFinite(n))?n.toLocaleString('en-IN',{minimumFractionDigits:2,maximumFractionDigits:2}):'?'}
 
@@ -674,6 +715,144 @@ function renderCosts(){
       on your own numbers, not advice to buy or sell anything.</div>`;
 }
 
+
+// --- Sell planner ---------------------------------------------------------
+// The one thing no broker will show you: tick some holdings and see what you
+// would actually walk away with. Brokers show gross value. What matters is
+// gross minus exit charges minus tax, against an allowance that resets on
+// 31 March and is invisible because it belongs to a PAN, not an account.
+//
+// Nothing here recommends selling. It prices a decision you are considering.
+const STCG_RATE=0.20, LTCG_RATE=0.125;
+let planSel=new Set();
+
+function planRows(){
+  return ((digestRaw&&digestRaw.entries)||[])
+    .filter(e=>e.price&&e.qty&&e.avg_cost)
+    .map(e=>{
+      const gross=e.price*e.qty, cost=e.avg_cost*e.qty;
+      const days=e.held_days||0;
+      const isLT=days>365;
+      return {t:e.ticker, name:e.name||'', gross, cost, gain:gross-cost,
+              days, isLT, basis:e.held_basis||null,
+              exit:exitCost(gross), pct:e.pl_pct,
+              who:(e.lots&&e.lots[0]&&e.lots[0].account)||'Unassigned',
+              toLT:days?Math.max(0,366-days):null};
+    }).sort((a,b)=>b.gross-a.gross);
+}
+
+function planTotals(rows){
+  const sel=rows.filter(r=>planSel.has(r.t));
+  const gross=sel.reduce((s,r)=>s+r.gross,0);
+  const exit=sel.reduce((s,r)=>s+r.exit,0);
+  const stGain=sel.filter(r=>!r.isLT).reduce((s,r)=>s+Math.max(0,r.gain),0);
+  const stLoss=sel.filter(r=>!r.isLT).reduce((s,r)=>s+Math.min(0,r.gain),0);
+  const ltGain=sel.filter(r=>r.isLT).reduce((s,r)=>s+Math.max(0,r.gain),0);
+  const ltLoss=sel.filter(r=>r.isLT).reduce((s,r)=>s+Math.min(0,r.gain),0);
+  // Losses offset gains of the same class first, which is what actually
+  // happens on the return and is why harvesting a loser alongside a winner
+  // changes the bill.
+  const stNet=Math.max(0,stGain+stLoss), ltNet=Math.max(0,ltGain+ltLoss);
+  // The long-term exemption belongs to a PAN, so it is counted per person.
+  const byPerson={};
+  sel.filter(r=>r.isLT).forEach(r=>{
+    byPerson[r.who]=(byPerson[r.who]||0)+r.gain});
+  let ltTaxable=0;
+  Object.values(byPerson).forEach(g=>{
+    ltTaxable+=Math.max(0,g-LTCG_EXEMPT)});
+  ltTaxable=Math.min(ltTaxable,ltNet);
+  const tax=stNet*STCG_RATE+ltTaxable*LTCG_RATE;
+  const soon=sel.filter(r=>!r.isLT&&r.toLT!==null&&r.toLT<=60&&r.gain>0);
+  const waitSaves=soon.reduce((s,r)=>s+r.gain*(STCG_RATE-LTCG_RATE),0);
+  return {sel,gross,exit,stNet,ltNet,ltTaxable,tax,
+          net:gross-exit-tax,byPerson,soon,waitSaves};
+}
+
+function planToggle(t){planSel.has(t)?planSel.delete(t):planSel.add(t);renderPlan()}
+function planClear(){planSel.clear();renderPlan()}
+function planPick(kind){
+  const rows=planRows();
+  planSel.clear();
+  if(kind==='dead'){
+    const dead=new Set(((digestRaw&&digestRaw.dead_money)||[]).map(d=>d.ticker));
+    rows.filter(r=>dead.has(r.t)).forEach(r=>planSel.add(r.t));
+  }else if(kind==='tiny'){
+    rows.filter(r=>r.exit/r.gross>=0.01).forEach(r=>planSel.add(r.t));
+  }else if(kind==='freelt'){
+    // Long-term winners that fit inside each PAN's untouched allowance.
+    const used={};
+    rows.filter(r=>r.isLT&&r.gain>0).sort((a,b)=>b.gain-a.gain).forEach(r=>{
+      const u=used[r.who]||0;
+      if(u+r.gain<=LTCG_EXEMPT){used[r.who]=u+r.gain;planSel.add(r.t)}});
+  }
+  renderPlan();
+}
+
+function renderPlan(){
+  const L=$('list');
+  const rows=planRows();
+  if(!rows.length){
+    L.innerHTML='<div class="card sub">Nothing priced with a cost basis yet. '
+      +'Run the digest workflow.</div>';return}
+  const T=planTotals(rows);
+  const n=T.sel.length;
+  const money=v=>inr(Math.round(v));
+
+  const head=`<div class="card" style="position:sticky;top:52px;z-index:4">
+    <div class="ttl">${n?`Selling ${n} holding${n>1?'s':''}`:'Pick what you are thinking of selling'}</div>
+    ${n?`
+    <div class="planline"><span>Gross value</span><b class="n">${money(T.gross)}</b></div>
+    <div class="planline"><span>Exit charges</span><b class="n" style="color:var(--crimson)">\u2212${money(T.exit)}</b></div>
+    <div class="planline"><span>Tax</span>
+      <b class="n" style="color:var(--crimson)">\u2212${money(T.tax)}</b></div>
+    <div class="sub" style="margin:-2px 0 4px;font-size:11.5px">
+      ${money(T.stNet)} taxed at 20%, ${money(T.ltTaxable)} at 12.5% above the allowance</div>
+    <div class="planline" style="border-top:1px solid var(--line);margin-top:6px;padding-top:8px">
+      <span><b>Cash in your account</b></span>
+      <b class="n" style="font-size:20px;color:var(--armed)">${money(T.net)}</b></div>
+    ${T.soon.length?`<div class="sub" style="margin-top:10px;color:var(--fired)">
+      ${T.soon.length} of these turn long term within 60 days.
+      Waiting would cut the tax by about <b>${money(T.waitSaves)}</b>.</div>`:''}
+    ${Object.keys(T.byPerson).length?`<div class="sub" style="margin-top:8px">
+      Long-term gain by person:
+      ${Object.entries(T.byPerson).map(([w,g])=>
+        `${w} ${money(g)}${g<0?' <span class="sub">(a loss)</span>'
+        :g>LTCG_EXEMPT?' <span style="color:var(--fired)">(over the '
+        +money(LTCG_EXEMPT)+' allowance)</span>'
+        :' <span style="color:var(--armed)">(within allowance)</span>'}`
+      ).join(' \u00B7 ')}</div>`:''}
+    `:`<p class="sub" style="margin:6px 0 0">Tick holdings below and this works out
+      what actually reaches your bank: gross value, minus exit charges, minus tax,
+      counting each person's ${money(LTCG_EXEMPT)} long-term allowance separately.</p>`}
+    <div class="actions" style="margin-top:12px">
+      <button class="small" onclick="planPick('dead')">Held over a year, going nowhere</button>
+      <button class="small" onclick="planPick('tiny')">Expensive to exit</button>
+      <button class="small" onclick="planPick('freelt')">Tax-free long-term gains</button>
+      ${n?`<button class="small" onclick="planClear()">Clear</button>`:''}
+    </div></div>`;
+
+  const body=`<div class="card" style="padding:0;overflow-x:auto"><table class="pk">
+    <tr><th>Stock</th><th>Worth</th><th>Gain</th><th>Held</th><th>Exit cost</th><th>Whose</th></tr>
+    ${rows.map(r=>{
+      const on=planSel.has(r.t);
+      return `<tr onclick="planToggle('${r.t}')" style="cursor:pointer${on?';background:rgba(99,185,138,.10)':''}">
+        <td><span style="color:${on?'var(--armed)':'var(--muted)'}">${on?'\u2611':'\u2610'}</span>
+          <b>${r.t}</b></td>
+        <td class="num">${money(r.gross)}</td>
+        <td class="num" style="color:${r.gain>=0?'var(--armed)':'var(--crimson)'}">${r.gain>=0?'+':'\u2212'}${money(Math.abs(r.gain))}</td>
+        <td class="num sub">${r.isLT?'<span style="color:var(--armed)">long</span>'
+          :(r.toLT!==null?`<span style="color:var(--fired)">${r.toLT}d</span>`:'\u2014')}</td>
+        <td class="num sub">${money(r.exit)} <span style="opacity:.7">${(r.exit/r.gross*100).toFixed(1)}%</span></td>
+        <td class="sub">${r.who}</td></tr>`}).join('')}
+    </table></div>
+    <div class="card sub" style="font-size:11.5px">Short term 20%, long term 12.5%
+      above ${money(LTCG_EXEMPT)} per PAN per year. Losses offset gains of the same
+      class first. Charges are measured from your own statements. Holdings marked
+      with days remaining are still short term. This prices a decision, it does
+      not make one, and it is not a substitute for your CA.</div>`;
+  L.innerHTML=head+body;
+}
+
 function setTab(t){tab=t;render()}
 
 function accountsOf(list){
@@ -698,7 +877,8 @@ function render(){
               ['all','All'],
               ['peaks','\u26F0 Peaks'],
               ['held','\u23F3 Held'],
-              ['costs','\u20B9 Leaks']]
+              ['costs','\u20B9 Leaks'],
+              ['plan','\u{1F9EE} Sell planner']]
     .concat(accountsOf(alerts).map(x=>['acct:'+x,x]));
   $('tabs').innerHTML=tabs.map(([k,lab])=>
     `<div class="tab${tab===k?' on':''}" onclick="setTab('${k.replace(/'/g,"\\'")}')">${lab}</div>`).join('');
@@ -712,7 +892,8 @@ function render(){
         title="Merge the same stock held in several accounts">`
     + (combine?'\u25CF ':'') + 'Combine accounts</div>';
 
-  const analysis={peaks:renderPeaks,held:renderHeld,costs:renderCosts};
+  const analysis={peaks:renderPeaks,held:renderHeld,costs:renderCosts,
+                  plan:renderPlan};
   $('sortbar').style.display=analysis[tab]?'none':'';
   if(analysis[tab]){analysis[tab]();$('savebar').classList.toggle('show',dirty);return}
 
@@ -754,7 +935,13 @@ function render(){
   const wr=sortRows(show.filter(x=>isWatch(x.a))),
         ar=sortRows(show.filter(x=>!isWatch(x.a)));
 
-  ar.forEach(({a,i})=>L.appendChild(alertCard(a,i)));
+  // Alert cards sit in a grid so a wide screen shows two or three abreast
+  // instead of one full-width card per holding down an endless page.
+  if(ar.length){
+    const grid=document.createElement('div'); grid.className='alertgrid';
+    ar.forEach(({a,i})=>grid.appendChild(alertCard(a,i)));
+    L.appendChild(grid);
+  }
 
   if(wr.length){
     const box=document.createElement('div'); box.className='card'; box.style.padding='0';
@@ -807,8 +994,14 @@ function alertCard(a,i){
     </div>
     ${(a.account||a.broker)?`<div class="sub" style="margin-top:2px">Held in: <span style="color:var(--paper)">${[a.account,a.broker].filter(Boolean).join(' / ')}</span></div>`:''}
     ${a.avg_cost?`<div class="sub" style="margin-top:2px">Cost ${cur(a)}${fmt(parseFloat(a.avg_cost))}${a.qty?` \u00B7 ${a.qty} shares`:''}${(a.alert_type==='percent'&&!a.reference_price)?' \u00B7 target measured from cost':''}</div>`:''}
-    <div class="trigger">${a.alert_type==='percent'
+    <div class="trigger">${
+      a.alert_type==='percent'
       ?`${fmt(parseFloat(a.reference_price||a.avg_cost))} ${a.direction==='above'?'+':'\u2212'}${a.alert_value}% \u2192 <b>${a.direction} ${cur(a)}${fmt(t)}</b>`
+      :a.alert_type==='trail'
+      ?(t?`trails ${a.alert_value}% under its peak \u2192 <b>sell alert at ${cur(a)}${fmt(t)}</b>`
+          +`<span class="sub"> (peak ${cur(a)}${fmt(trailPeak(a))})</span>`
+        :`trails <b>${a.alert_value}%</b> under its highest price`
+          +`<span class="sub"> \u00B7 peak set on the next price check</span>`)
       :`<b>${a.direction} ${cur(a)}${fmt(t)}</b>`}</div>
     ${f&&!rearming?`<div class="sub">Fired ${new Date(f.fired_at_utc).toLocaleString('en-IN',{dateStyle:'medium',timeStyle:'short'})} at ${cur(a)}${fmt(f.fired_price)}</div>`:''}
     ${rearming?`<div class="sub">Will re-arm on Save</div>`:''}
@@ -909,9 +1102,15 @@ function smartParse(){
   msg.className='sub';
   $('n-tk').scrollIntoView({behavior:'smooth',block:'center'})}
 
-function refToggle(){const p=$('n-ty').value==='percent';
+function refToggle(){
+  const ty=$('n-ty').value, p=ty==='percent', tr=ty==='trail';
   $('n-ref-wrap').style.display=p?'':'none';
-  $('n-val-label').textContent=p?'Percent move (e.g. 5 for 5%)':'Target price'}
+  // A trailing stop has no direction to choose and no reference price. It
+  // only ever fires downward, from a peak the scheduler tracks.
+  $('n-di').closest('div').style.display=tr?'none':'';
+  $('n-val-label').textContent=
+    p?'Percent move (e.g. 5 for 5%)':
+    tr?'Trail percent (e.g. 20 for 20% below the peak)':'Target price'}
 function addAlert(){
   const a={ticker:$('n-tk').value.trim().toUpperCase(),exchange:$('n-ex').value,
     alert_type:$('n-ty').value,alert_value:$('n-val').value.trim(),
@@ -921,6 +1120,10 @@ function addAlert(){
     note:$('n-note').value.trim(),buy_date:$('n-bdate').value.trim()};
   if(!a.ticker){toast('Ticker is required',true);return}
   if(a.alert_type==='watch'){a.alert_value='';a.reference_price='';a.direction=''}
+  else if(a.alert_type==='trail'){
+    a.direction='below'; a.reference_price='';
+    const v=parseFloat(a.alert_value);
+    if(!(v>=1&&v<=90)){toast('A trailing stop must be between 1 and 90 percent',true);return}}
   else if(isNaN(parseFloat(a.alert_value))){toast('Alert value must be a number',true);return}
   if(a.alert_type!=='watch'&&a.alert_type==='percent'&&isNaN(parseFloat(a.reference_price))&&isNaN(parseFloat(a.avg_cost))){
     toast('Percent alerts need a reference price, or an avg cost to measure from',true);return}
