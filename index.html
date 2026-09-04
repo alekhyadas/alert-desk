@@ -260,6 +260,17 @@
   .pchip{display:inline-block;font-size:11.5px;border:1px solid var(--line);
     background:var(--panel2);border-radius:20px;padding:3px 10px;margin:7px 6px 0 0}
   .pchip.bad{color:var(--fired);border-color:var(--fired)}
+  .adot{display:inline-block;width:8px;height:8px;border-radius:50%;
+    margin-right:6px;vertical-align:middle}
+  .tbar{height:6px;border-radius:4px;background:var(--panel2);
+    overflow:hidden;margin-top:10px}
+  .tbar-f{height:100%;border-radius:4px;transition:width .3s ease}
+  .exec{margin-left:auto;font-size:12.5px;font-weight:600;padding:7px 14px;
+    border-radius:9px;background:var(--armed-bg);color:var(--armed);
+    border:1px solid var(--armed);cursor:pointer}
+  .exec:hover{background:var(--armed);color:#08130D}
+  .ovl{margin-top:10px;padding:11px 13px;border-radius:10px;
+    background:var(--panel2);border:1px solid var(--line);font-size:13px}
   .err{color:#F09A9A}
   details summary{cursor:pointer;color:var(--muted);font-size:13px}
   a{color:var(--crimson)}
@@ -339,13 +350,15 @@
     <input id="smart-in" style="margin-top:8px" oninput="smartPreview()"
       placeholder="e.g. HDBFS 5% down from 732.50">
     <div id="smartchips"></div>
+    <div id="overlap"></div>
     <div style="margin-top:10px"><button onclick="smartParse()">Understand</button></div>
     <p id="smart-msg" class="sub" style="margin-top:6px"></p>
   </div>
   <div class="card">
     <h2 style="font-size:16px">Add an alert</h2>
     <div class="editgrid" style="margin-top:8px">
-      <div><label>Ticker</label><input id="n-tk" placeholder="RELIANCE" autocapitalize="characters"></div>
+      <div><label>Ticker</label><input id="n-tk" placeholder="RELIANCE"
+        autocapitalize="characters" oninput="overlapNote()"></div>
       <div><label>Exchange</label><select id="n-ex"><option>NSE</option><option>BSE</option><option>US</option></select></div>
       <div><label>Type</label><select id="n-ty" onchange="refToggle()"><option value="price">price target</option><option value="percent">percent move</option><option value="trail">trailing stop (protects a winner)</option>
       <option value="watch">watch only (digest, no alerts)</option></select></div>
@@ -373,7 +386,10 @@
     Changes are staged locally until you press Save, which commits straight to the
     repo. The scheduler picks up the new list on its next run (within 30 minutes
     during market hours). Re-arming a fired alert also takes effect on Save.
-    <div style="margin-top:8px"><a href="#" onclick="forget();return false">Disconnect and forget token</a></div>
+    <div style="margin-top:8px">
+      <a href="#" onclick="setKiteKey();return false">Kite execute buttons</a>
+      <span class="sub"> \u00B7 </span>
+      <a href="#" onclick="forget();return false">Disconnect and forget token</a></div>
   </div>
   </div>
  </div>
@@ -762,7 +778,79 @@ function renderCosts(){
       </div>`);
   }
 
-  // 5. Income already arriving, which is easy to forget is there
+  // 5. The fee nobody sees, because it is deducted from NAV rather than
+  //    charged to the account. It never appears on a statement.
+  const ex=expenseLeak(ents);
+  if(ex.rows.length){
+    cards.push(`<div class="card">
+      <div class="ttl">Fund fees you never see charged</div>
+      <p class="sub" style="margin:6px 0 10px">ETF expenses come out of the
+      NAV, so they never appear on a contract note or a statement. Across
+      ${ex.rows.length} ETF holdings that is about <b>${inr(ex.total)} a
+      year</b>, every year you hold them.</p>
+      <div style="overflow-x:auto"><table class="pk">
+      <tr><th>ETF</th><th>Worth</th><th>Fee</th><th>Cost a year</th></tr>
+      ${ex.rows.map(r=>`<tr><td><b>${r.t}</b></td>
+        <td class="num">${inr(r.v)}</td>
+        <td class="num sub">${r.ter.toFixed(2)}%</td>
+        <td class="num" style="color:${r.cost>200?'var(--crimson)':'var(--fired)'}">${inr(r.cost)}</td></tr>`).join('')}
+      </table></div>
+      <p class="sub" style="margin-top:10px">A fee is not automatically bad:
+      GOLDBEES at 0.82% is the cost of holding gold without a locker. It is
+      worth knowing the number, and worth checking whether a cheaper fund
+      tracks the same thing. Ratios are as published and do change, so verify
+      against the factsheet before acting.</p></div>`);
+  }
+
+  // 6. Results landing inside the next few days, where a held position can
+  //    move hard on an announcement rather than on anything you decided.
+  const soonE=ents.map(e=>({e,d:daysUntil(e.earnings)}))
+    .filter(x=>x.d!==null&&x.d>=0&&x.d<=5)
+    .sort((a,b)=>a.d-b.d);
+  if(soonE.length){
+    cards.push(`<div class="card">
+      <div class="ttl">Results within five days</div>
+      <p class="sub" style="margin:6px 0 10px">These can move hard on the
+      announcement. Worth knowing before you set or act on an alert.</p>
+      <div style="overflow-x:auto"><table class="pk">
+      <tr><th>Stock</th><th>Reports</th><th>Position</th><th>Gain</th></tr>
+      ${soonE.map(({e,d})=>`<tr><td><b>${e.ticker}</b></td>
+        <td class="num" style="color:${d<=1?'var(--crimson)':'var(--fired)'}">${d===0?'today':d===1?'tomorrow':'in '+d+' days'}</td>
+        <td class="num sub">${inr(e.price*e.qty)}</td>
+        <td class="num" style="color:${(e.pl_pct||0)>=0?'var(--armed)':'var(--crimson)'}">${(e.pl_pct||0)>=0?'+':''}${(e.pl_pct||0).toFixed(1)}%</td></tr>`).join('')}
+      </table></div></div>`);
+  }
+
+  // 7. The same stock in several accounts. No broker adds these up, so a
+  //    position that looks small in each place can be large in total.
+  const fam={};
+  ents.forEach(e=>{
+    const v=e.price*e.qty;
+    const accs=new Set((e.lots||[]).map(l=>l.account||'Unassigned'));
+    fam[e.ticker]={v,accs:[...accs],qty:e.qty}});
+  const spread=Object.entries(fam).filter(([,x])=>x.accs.length>1)
+    .sort((a,b)=>b[1].v-a[1].v);
+  const tot=(D.totals&&D.totals.inr&&D.totals.inr.current)||0;
+  if(spread.length&&tot){
+    cards.push(`<div class="card">
+      <div class="ttl">Held in more than one account</div>
+      <p class="sub" style="margin:6px 0 10px">Each broker shows you its own
+      slice. Concentration is a family-level fact, and this is the only place
+      the slices are added up.</p>
+      <div style="overflow-x:auto"><table class="pk">
+      <tr><th>Stock</th><th>Accounts</th><th>Shares</th><th>Worth</th><th>Of family</th></tr>
+      ${spread.slice(0,10).map(([t,x])=>{
+        const pc=x.v/tot*100;
+        return `<tr><td><b>${t}</b></td>
+          <td class="sub">${x.accs.map(w=>
+            `<span class="adot" style="background:${acctColour(w)}"></span>`).join('')} ${x.accs.join(', ')}</td>
+          <td class="num sub">${x.qty}</td>
+          <td class="num">${inr(x.v)}</td>
+          <td class="num" style="color:${pc>=8?'var(--fired)':'var(--muted)'}">${pc.toFixed(1)}%</td></tr>`}).join('')}
+      </table></div></div>`);
+  }
+
+  // 8. Income already arriving, which is easy to forget is there
   const dv=D.dividends||{};
   if(dv.ttm_total){
     cards.push(`<div class="card">
@@ -1246,6 +1334,139 @@ const ICO={
   ack:'<svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 8.5l3 3 6-7"/></svg>',
   chart:'<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12l4-5 3 3 5-6"/></svg>'};
 
+
+// Published TERs, checked against the AMC listings rather than assumed.
+// Verify against the factsheet before acting: these change, and a stale
+// number here would quietly misstate the figure below.
+const TER={GOLDBEES:0.82, JUNIORBEES:0.17, NIFTYBEES:0.04, BANKBEES:0.19,
+           LIQUIDBEES:0.69, PSUBNKBEES:0.49, MON100:0.58, SETFNIF50:0.05,
+           SILVERBEES:0.50, ICICIB22:0.07, CPSEETF:0.07};
+
+function daysUntil(s){
+  if(!s)return null;
+  const d=new Date(s); if(isNaN(d))return null;
+  return Math.round((d-new Date())/86400000);
+}
+
+function expenseLeak(ents){
+  const rows=ents.filter(e=>TER[e.ticker]&&e.price&&e.qty)
+    .map(e=>{const v=e.price*e.qty;
+      return {t:e.ticker,v,ter:TER[e.ticker],cost:v*TER[e.ticker]/100}})
+    .sort((a,b)=>b.cost-a.cost);
+  return {rows, total:rows.reduce((s,r)=>s+r.cost,0)};
+}
+
+// How close a trailing stop is to firing, as a bar. A number twelve percent
+// under a moving peak is hard to feel; a bar that fills as the gap closes
+// is not.
+function trailBar(a){
+  const pk=trailPeak(a), d=digestBy[a.ticker], px=d&&d.price;
+  if(!pk||!px)return '';
+  const stop=pk*(1-parseFloat(a.alert_value)/100);
+  const span=pk-stop;
+  const used=Math.min(1,Math.max(0,(pk-px)/span));
+  const c=used>=.8?'var(--crimson)':used>=.5?'var(--fired)':'var(--armed)';
+  return `<div class="tbar" title="Peak ${inr(pk)}, stop ${inr(stop)}">
+      <div class="tbar-f" style="width:${(used*100).toFixed(1)}%;background:${c}"></div>
+    </div>
+    <div class="sub" style="font-size:11.5px;margin-top:3px">
+      ${(used*100).toFixed(0)}% of the way down from its peak
+      <span style="opacity:.75">\u00B7 ${inr(px)} now, stop at ${inr(stop)}</span></div>`;
+}
+
+// One colour per person. With seven accounts the real risk is not a wrong
+// number, it is acting on the right number in the wrong account.
+const ACCENTS=['#5B9DF9','#4ECB8D','#E8B44C','#C77DE0','#4FC5D4','#F0846B','#9BA7F5'];
+function acctColour(name){
+  if(!name)return 'var(--paused)';
+  let h=0; for(let i=0;i<name.length;i++)h=(h*31+name.charCodeAt(i))>>>0;
+  return ACCENTS[h%ACCENTS.length];
+}
+
+
+// --- Kite Publisher -------------------------------------------------------
+// Zerodha's offsite order flow. A form POST hands a pre-filled basket to
+// Kite; Kite then asks you to log in and confirm. Nothing is executed by
+// this page and nothing can be. The api_key is not a credential on its own,
+// it identifies the app, and every order still needs your own login.
+//
+// Free since March 2025: order and account APIs carry no charge. The
+// paid tier is only for streaming and historical data.
+function kiteKey(){return localStorage.getItem('kiteapikey')||''}
+function setKiteKey(){
+  const k=prompt('Kite Connect api_key (from developers.kite.trade, Personal plan is free). Leave blank to remove.',kiteKey());
+  if(k===null)return;
+  k.trim()?localStorage.setItem('kiteapikey',k.trim()):localStorage.removeItem('kiteapikey');
+  toast(k.trim()?'Execute buttons enabled':'Kite key removed');render()}
+
+// Which side the alert implies. A stop or an above-target on something you
+// hold is an exit; a below-target on something you do not hold is an entry.
+// The label always says which, so a wrong guess is visible before you click.
+function kiteSide(a){
+  const q=parseFloat(a.qty);
+  const held=isFinite(q)&&q>0;
+  if(!held)return a.direction==='below'?'BUY':null;
+  return (a.direction==='above'||a.alert_type==='trail')?'SELL':null;
+}
+
+function kiteExec(i){
+  const a=alerts[i], key=kiteKey();
+  if(!key){setKiteKey();return}
+  const side=kiteSide(a); if(!side)return;
+  const qty=Math.max(1,Math.round(parseFloat(a.qty)||1));
+  const px=trigger(a);
+  const payload=[{variety:'regular',tradingsymbol:a.ticker,
+    exchange:a.exchange==='BSE'?'BSE':'NSE',transaction_type:side,
+    order_type:isFinite(px)?'LIMIT':'MARKET',product:'CNC',
+    quantity:qty,readonly:false}];
+  if(isFinite(px))payload[0].price=Math.round(px*20)/20;  // NSE tick size
+  const f=document.createElement('form');
+  f.method='POST'; f.action='https://kite.zerodha.com/connect/basket';
+  f.target='_blank'; f.style.display='none';
+  const add=(n,v)=>{const el=document.createElement('input');
+    el.type='hidden'; el.name=n; el.value=v; f.appendChild(el)};
+  add('api_key',key); add('data',JSON.stringify(payload));
+  document.body.appendChild(f); f.submit(); f.remove();
+}
+
+// --- Family overlap -------------------------------------------------------
+// Seven accounts means the same stock can sit in several of them without
+// anyone seeing the total. Concentration is a family-level fact and no
+// broker shows it.
+function familyHold(ticker){
+  const out={};
+  alerts.forEach(a=>{
+    if(a.ticker!==ticker)return;
+    const q=parseFloat(a.qty);
+    if(!isFinite(q)||q<=0)return;
+    const who=a.account||'Unassigned';
+    out[who]=(out[who]||0)+q});
+  return out;
+}
+
+function overlapNote(){
+  const box=$('overlap'); if(!box)return;
+  const tk=($('n-tk').value||'').trim().toUpperCase();
+  if(!tk){box.innerHTML='';return}
+  const held=familyHold(tk);
+  const who=Object.keys(held);
+  if(!who.length){box.innerHTML='';return}
+  const d=digestBy[tk], px=d&&d.price;
+  const total=who.reduce((s,w)=>s+held[w],0);
+  const val=px?px*total:null;
+  const tot=(digestRaw&&digestRaw.totals&&digestRaw.totals.inr&&digestRaw.totals.inr.current)||0;
+  const share=(val&&tot)?val/tot*100:null;
+  box.innerHTML=`<div class="ovl">
+    <b>${tk} is already held in the family</b>
+    <div style="margin-top:5px">${who.map(w=>
+      `<span class="pchip"><span class="adot" style="background:${acctColour(w)}"></span>
+       ${w} <b>${held[w]}</b></span>`).join('')}</div>
+    ${val?`<div class="sub" style="margin-top:6px">${total} shares across
+      ${who.length} account${who.length>1?'s':''}, worth ${inr(val)}${
+      share?` \u00B7 <b style="color:${share>=8?'var(--fired)':'var(--muted)'}">${share.toFixed(1)}% of family net worth</b>`:''}</div>`:''}
+  </div>`;
+}
+
 function alertCard(a,i){
   const f=firedEntry(a), rearming=f&&rearm.has(f.key);
   const status=!a.enabled?'paused':(f&&!rearming?'fired':'armed');
@@ -1260,7 +1481,9 @@ function alertCard(a,i){
         onclick="event.stopPropagation()" title="Open the live chart">${ICO.chart}</a>
       <span class="chip ${status}">${status.toUpperCase()}</span>
     </div>
-    ${(a.account||a.broker)?`<div class="sub" style="margin-top:2px">Held in: <span style="color:var(--paper)">${[a.account,a.broker].filter(Boolean).join(' / ')}</span></div>`:''}
+    ${(a.account||a.broker)?`<div class="sub" style="margin-top:4px">
+      <span class="adot" style="background:${acctColour(a.account)}"></span>
+      <span style="color:var(--paper)">${[a.account,a.broker].filter(Boolean).join(' / ')}</span></div>`:''}
     ${a.avg_cost?`<div class="sub" style="margin-top:2px">Cost ${cur(a)}${fmt(parseFloat(a.avg_cost))}${a.qty?` \u00B7 ${a.qty} shares`:''}${(a.alert_type==='percent'&&!a.reference_price)?' \u00B7 target measured from cost':''}</div>`:''}
     <div class="trigger">${
       a.alert_type==='percent'
@@ -1271,6 +1494,7 @@ function alertCard(a,i){
         :`trails <b>${a.alert_value}%</b> under its highest price`
           +`<span class="sub"> \u00B7 peak set on the next price check</span>`)
       :`<b>${a.direction} ${cur(a)}${fmt(t)}</b>`}</div>
+    ${a.alert_type==='trail'?trailBar(a):''}
     ${f&&!rearming?`<div class="sub">Fired ${new Date(f.fired_at_utc).toLocaleString('en-IN',{dateStyle:'medium',timeStyle:'short'})} at ${cur(a)}${fmt(f.fired_price)}</div>`:''}
     ${rearming?`<div class="sub">Will re-arm on Save</div>`:''}
     ${f&&!rearming&&!f.acked&&!ack.has(f.key)?`<div class="sub" style="color:var(--fired)">Reminder ${f.sends||1} of 3 sent, not acknowledged</div>`:''}
@@ -1282,6 +1506,9 @@ function alertCard(a,i){
       <button class="ib" title="${a.enabled?'Pause':'Resume'}" aria-label="${a.enabled?'Pause':'Resume'}" onclick="togglePause(${i})">${a.enabled?ICO.pause:ICO.play}</button>
       <button class="ib" title="Edit" aria-label="Edit" onclick="editAlert(${i})">${ICO.edit}</button>
       <button class="ib danger" title="Delete" aria-label="Delete" onclick="delAlert(${i})">${ICO.del}</button>
+      ${(f&&!rearming&&kiteSide(a)&&a.exchange!=='US')?`<button class="exec"
+        onclick="kiteExec(${i})" title="Opens Kite with the order pre-filled. You confirm there.">
+        ${kiteSide(a)==='SELL'?'Sell':'Buy'} ${Math.round(parseFloat(a.qty)||1)} in Kite</button>`:''}
     </div>`;
   return card}
 
