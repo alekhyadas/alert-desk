@@ -1124,33 +1124,71 @@ const IDX_LABEL={nifty50:'Nifty 50',nifty500:'Nifty 500',
                  midcap:'Midcap 100',smallcap:'Smallcap 100'};
 
 function bars(items,w,h){
-  // A bar per series, scaled to the largest absolute move so a small
-  // difference is not exaggerated into a dramatic one.
+  // Bars are scaled to the largest absolute move so a small difference is
+  // not exaggerated into a dramatic one. The zero line sits high enough to
+  // leave room below it whenever any series is negative; scaling both
+  // directions off the space above the axis made negative bars overflow the
+  // chart and land their labels on top of the category names.
   const max=Math.max(1,...items.map(i=>Math.abs(i.v)));
+  const anyNeg=items.some(i=>i.v<0);
   const bw=Math.min(56,(w-20)/items.length-12), gap=12;
-  const mid=h-24;
+  const labelRow=18, pad=18;
+  const floor=h-labelRow;
+  const mid=anyNeg?pad+(floor-pad)*0.58:floor;
+  const upRoom=mid-pad, downRoom=floor-mid-2;
   return `<svg viewBox="0 0 ${w} ${h}" width="100%" height="${h}"
     role="img" aria-label="Portfolio against the indices">
     <line x1="0" y1="${mid}" x2="${w}" y2="${mid}" stroke="var(--line)"/>
     ${items.map((it,n)=>{
-      const x=10+n*(bw+gap);
-      const ht=Math.max(2,Math.abs(it.v)/max*(mid-16));
-      const up=it.v>=0;
+      const x=10+n*(bw+gap), up=it.v>=0;
+      const room=up?upRoom:downRoom;
+      const ht=Math.max(2,Math.min(room,Math.abs(it.v)/max*room));
       const y=up?mid-ht:mid;
       return `<rect x="${x}" y="${y}" width="${bw}" height="${ht}" rx="4"
-          fill="${it.me?'var(--crimson)':(up?'var(--armed)':'var(--fired)')}"
-          opacity="${it.me?1:.65}"/>
-        <text x="${x+bw/2}" y="${up?y-6:y+ht+14}" text-anchor="middle"
+          fill="${it.me?'var(--brand)':(up?'var(--armed)':'var(--crimson)')}"
+          opacity="${it.me?1:.7}"/>
+        <text x="${x+bw/2}" y="${up?y-6:mid-6}" text-anchor="middle"
           font-size="12" font-weight="600"
-          fill="${it.me?'var(--crimson)':'var(--paper)'}">${it.v>=0?'+':''}${it.v.toFixed(1)}%</text>
-        <text x="${x+bw/2}" y="${h-6}" text-anchor="middle" font-size="10.5"
+          fill="${it.me?'var(--brand)':'var(--paper)'}">${it.v>=0?'+':''}${it.v.toFixed(1)}%</text>
+        <text x="${x+bw/2}" y="${h-4}" text-anchor="middle" font-size="10.5"
           fill="var(--muted)">${it.k}</text>`}).join('')}
   </svg>`}
+
+// The headline number, sized to how much of the book it actually covers.
+function xirrCard(){
+  const x=digestRaw&&digestRaw.xirr;
+  if(!x)return `<div class="card"><div class="ttl">Not enough dated holdings yet</div>
+    <p class="sub" style="margin-top:6px">XIRR needs a purchase date on at least
+    two priced holdings. Import the remaining broker statements and it appears
+    on its own.</p></div>`;
+  const c=x.xirr>=0?'var(--armed)':'var(--crimson)';
+  const gap=x.absolute_pct!==null?(x.absolute_pct-x.xirr):null;
+  return `<div class="card">
+    <div class="sub">Annualised return across ${x.holdings} dated holdings</div>
+    <div class="ttl" style="font-size:40px;color:${c};margin-top:2px">
+      ${x.xirr>=0?'+':''}${x.xirr.toFixed(1)}<span style="font-size:22px"> % a year</span></div>
+    <div class="sub" style="margin-top:6px">
+      ${inr(x.invested)} in, worth ${inr(x.value)} today,
+      <b>${x.absolute_pct>=0?'+':''}${x.absolute_pct.toFixed(1)}%</b> absolute</div>
+    ${gap!==null&&Math.abs(gap)>3?`<div class="sub" style="margin-top:8px;color:var(--fired)">
+      The absolute figure reads ${Math.abs(gap).toFixed(1)} points
+      ${gap>0?'higher':'lower'} because it ignores when each rupee went in.
+      An FD paying about 7% is the honest thing to beat.</div>`:''}
+    ${x.skipped?`<div class="sub" style="margin-top:8px">${x.skipped} holdings
+      excluded for having no purchase date, so this covers part of the book,
+      not all of it.</div>`:''}
+    <div class="sub" style="margin-top:8px;font-size:11.5px">Only the earliest
+      buy per holding is known, so positions built over several purchases are
+      treated as one outflow on that first date. That lengthens the assumed
+      holding period and understates the rate, so the true figure is a little
+      higher than this.</div>
+  </div>`;
+}
 
 function renderMonth(){
   const L=$('list'), m=digestRaw&&digestRaw.month;
   if(!m){
-    L.innerHTML=`<div class="card"><div class="ttl">Not enough history yet</div>
+    L.innerHTML=xirrCard()+`<div class="card"><div class="ttl">Not enough history yet</div>
       <p class="sub" style="margin-top:6px">This needs about a month of daily
       digest runs before it can compare anything. It fills itself in as
       portfolio_history.csv grows, and index levels are recorded from today
@@ -1164,7 +1202,7 @@ function renderMonth(){
       :beat===0?'behind every index'
       :`ahead of ${beat} of ${idx.length}`)
     : 'no index levels recorded yet';
-  L.innerHTML=`
+  L.innerHTML=xirrCard()+`
   <div class="card">
     <div class="sub">${m.from} to ${m.to}</div>
     <div class="ttl" style="font-size:24px;margin-top:2px">
@@ -1174,7 +1212,7 @@ function renderMonth(){
     ${m.added?`<div class="sub" style="margin-top:6px">${inr(m.added)} was paid
       in during this period and has been excluded, so this is performance
       rather than deposits.</div>`:''}
-    <div style="margin-top:14px">${bars(items,520,150)}</div>
+    <div style="margin-top:14px">${bars(items,520,170)}</div>
   </div>
   <div class="card">
     <div class="ttl">What moved the needle</div>
@@ -1450,7 +1488,11 @@ function acctColour(name){
 //
 // Free since March 2025: order and account APIs carry no charge. The
 // paid tier is only for streaming and historical data.
-function kiteKey(){return localStorage.getItem('kiteapikey')||''}
+// Publisher api_key. This is public by design: Zerodha's own embeddable
+// trade buttons carry it in page source, and it can do nothing without your
+// Kite login. The api_SECRET is the sensitive half and appears nowhere here.
+const KITE_KEY_DEFAULT='owqm39urvjasxm7h';
+function kiteKey(){return localStorage.getItem('kiteapikey')||KITE_KEY_DEFAULT}
 function setKiteKey(){
   const k=prompt('Kite Connect api_key (from developers.kite.trade, Personal plan is free). Leave blank to remove.',kiteKey());
   if(k===null)return;
