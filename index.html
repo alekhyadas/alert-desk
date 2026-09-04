@@ -3,20 +3,31 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="theme-color" content="#160A0C">
+<meta name="theme-color" content="#0E1114">
 <title>Alert Desk</title>
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Alert Desk">
-<link rel="manifest" href="data:application/manifest+json,%7B%22name%22%3A%22Alert%20Desk%22%2C%22short_name%22%3A%22Alert%20Desk%22%2C%22display%22%3A%22standalone%22%2C%22background_color%22%3A%22%23160A0C%22%2C%22theme_color%22%3A%22%23160A0C%22%2C%22start_url%22%3A%22.%22%7D">
-<link rel="apple-touch-icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 180 180'%3E%3Crect width='180' height='180' rx='40' fill='%23160A0C'/%3E%3Ctext x='90' y='122' font-family='Segoe UI,sans-serif' font-size='96' font-weight='700' fill='%23D24A4F' text-anchor='middle'%3EA%3C/text%3E%3C/svg%3E">
+<link rel="manifest" href="data:application/manifest+json,%7B%22name%22%3A%22Alert%20Desk%22%2C%22short_name%22%3A%22Alert%20Desk%22%2C%22display%22%3A%22standalone%22%2C%22background_color%22%3A%22%230E1114%22%2C%22theme_color%22%3A%22%230E1114%22%2C%22start_url%22%3A%22.%22%7D">
+<link rel="apple-touch-icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 180 180'%3E%3Crect width='180' height='180' rx='40' fill='%230E1114'/%3E%3Ctext x='90' y='122' font-family='Segoe UI,sans-serif' font-size='96' font-weight='700' fill='%23E8505B' text-anchor='middle'%3EA%3C/text%3E%3C/svg%3E">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,300..800&display=swap" rel="stylesheet">
 <style>
   :root{
-    --ink:#160A0C; --panel:#241114; --panel2:#2E1519; --line:#47232A;
-    --paper:#F4EAE7; --muted:#C29CA1; --crimson:#D24A4F; --crimson-deep:#A03038;
-    --armed:#63B98A; --fired:#E0A44C; --paused:#8A6E73;
+    /* Surfaces are neutral slate, not tinted. A permanently reddish page in
+       a portfolio app carries loss semantics all day and, worse, flattens
+       the signal: when everything is red, red stops meaning anything.
+       Crimson survives only as the brand accent (logo, active tab), which
+       keeps this recognisably the same product as the emails without
+       painting the background with it. */
+    --ink:#0E1114; --panel:#171B1F; --panel2:#1E242A; --line:#2C343B;
+    --paper:#E9EDF1; --muted:#94A0AB;
+    --crimson:#F0616B; --crimson-deep:#B93B45;
+    /* Both semantic colours cleared 4.5:1 against --panel when checked. */
+    --armed:#4ECB8D; --armed-bg:rgba(78,203,141,.14);
+    --fired:#F0B44C; --fired-bg:rgba(240,180,76,.14);
+    --loss-bg:rgba(240,97,107,.14);
+    --brand:#E8505B; --paused:#6E7A85;
     --mono:ui-monospace,'Cascadia Code','Segoe UI Mono',Consolas,monospace;
     /* Figures are set in the system UI sans with tabular figures rather than
        in a monospace face. Monospace reads as a terminal; every serious
@@ -68,14 +79,32 @@
   button:disabled{opacity:.45;cursor:default}
   .alert{display:flex;flex-direction:column;gap:8px}
   .alert .top{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
-  .tk{font-family:'Bricolage Grotesque',sans-serif;font-weight:700;font-size:19px}
-  .ex{font-size:11px;color:var(--muted);border:1px solid var(--line);
+  /* The ticker is the focal point, so it gets the size and the weight while
+     the exchange badge recedes to a quiet label. */
+  .tk{font-family:'Bricolage Grotesque',sans-serif;font-weight:700;font-size:21px;
+    letter-spacing:-.015em;line-height:1.1}
+  .card.alert{padding:20px}
+  .card.alert .top{align-items:center;gap:8px;margin-bottom:2px}
+  /* A note is the user's own voice, so it is quoted with a rule rather than
+     left to run the full width as another line of system text. */
+  .note{margin-top:12px;padding:2px 0 2px 11px;border-left:2px solid var(--line);
+    color:var(--muted);font-size:13px;line-height:1.5;max-width:46ch}
+  .iconrow{margin-top:14px;justify-content:flex-end;gap:4px}
+  .ib{display:inline-flex;align-items:center;justify-content:center;
+    width:34px;height:34px;padding:0;border-radius:9px;
+    background:transparent;border:1px solid transparent;color:var(--muted);
+    cursor:pointer;transition:background .12s,color .12s,border-color .12s}
+  .ib:hover{background:var(--panel2);color:var(--paper);border-color:var(--line)}
+  .ib.danger:hover{color:var(--crimson);border-color:var(--crimson)}
+  .ib:focus-visible{outline:2px solid var(--brand);outline-offset:1px}
+  .chart{display:inline-flex;align-items:center}
+  .ex{font-size:10px;color:var(--paused);border:1px solid var(--line);
     border-radius:5px;padding:1px 6px}
   .chip{font-size:11px;font-weight:600;letter-spacing:.04em;border-radius:20px;
     padding:3px 10px;margin-left:auto}
-  .chip.armed{background:#1D3328;color:var(--armed)}
-  .chip.fired{background:#3A2A12;color:var(--fired)}
-  .chip.paused{background:#2C1F22;color:var(--paused)}
+  .chip.armed{background:var(--armed-bg);color:var(--armed)}
+  .chip.fired{background:var(--fired-bg);color:var(--fired)}
+  .chip.paused{background:rgba(148,160,171,.14);color:var(--muted)}
   .trigger{font-family:var(--mono);font-size:14px;color:var(--paper)}
   .trigger b{color:var(--crimson);font-weight:600}
   .sub{font-size:12.5px;color:var(--muted)}
@@ -87,17 +116,27 @@
     background:var(--panel);color:var(--muted);cursor:pointer;white-space:nowrap;
     transition:background .12s ease,color .12s ease,border-color .12s ease}
   .tab:hover{color:var(--paper);border-color:var(--paused)}
-  .tab.on{background:var(--crimson);border-color:var(--crimson-deep);color:#fff;font-weight:600}
-  .tab.on:hover{color:#fff}
+  .tab.on{background:var(--panel2);border-color:var(--paused);
+    color:var(--paper);font-weight:600}
+  .tab.on:hover{color:var(--paper)}
   /* One scrollable row each. Wrapping these turned nine tabs and six sort
      buttons into five stacked rows, which is 400px of a phone screen spent
      on chrome before a single holding appears. */
-  #tabs,#sortbar{display:flex;gap:7px;flex-wrap:nowrap;overflow-x:auto;
+  #tabs,#sortbar,#filterbar{display:flex;gap:7px;flex-wrap:nowrap;overflow-x:auto;
     scrollbar-width:none;-webkit-overflow-scrolling:touch;
     margin:0 -14px;padding:8px 14px}
-  #tabs::-webkit-scrollbar,#sortbar::-webkit-scrollbar{display:none}
-  #tabs{position:sticky;top:0;z-index:5;background:var(--ink);
-    border-bottom:1px solid var(--line)}
+  #tabs::-webkit-scrollbar,#sortbar::-webkit-scrollbar,
+  #filterbar::-webkit-scrollbar{display:none}
+  #tabs{position:sticky;top:0;z-index:5;background:var(--ink);gap:2px;
+    border-bottom:1px solid var(--line);padding-bottom:0}
+  #filterbar{padding-top:10px;padding-bottom:2px}
+  /* Views read as underlined tabs, filters stay as pills. Two different
+     jobs should not wear the same clothes. */
+  .vtab{font-size:13.5px;padding:9px 12px 11px;color:var(--muted);
+    cursor:pointer;white-space:nowrap;border-bottom:2px solid transparent;
+    transition:color .12s,border-color .12s}
+  .vtab:hover{color:var(--paper)}
+  .vtab.on{color:var(--paper);font-weight:600;border-bottom-color:var(--brand)}
   #sortbar{align-items:center;padding-top:10px;padding-bottom:2px;
     margin-bottom:8px}
   #sortbar>span{flex:0 0 auto}
@@ -152,7 +191,7 @@
   .msg.err{background:var(--ink);border:1px solid var(--crimson-deep);color:#F09A9A}
   .searchwrap input{flex:1}
   .mast{background:
-      radial-gradient(120% 140% at 0% 0%,rgba(210,74,79,.16),transparent 58%),
+      radial-gradient(120% 140% at 0% 0%,rgba(232,80,91,.10),transparent 58%),
       linear-gradient(160deg,var(--panel2),var(--panel));
     border:1px solid var(--line);border-radius:18px;padding:20px;
     margin-bottom:12px;box-shadow:var(--lift)}
@@ -203,6 +242,24 @@
   @media(min-width:620px){.mgrid{grid-template-columns:1fr 1fr}}
   a.newsrow{display:block;text-decoration:none;color:var(--paper)}
   a.newsrow:hover{border-color:var(--paused)}
+  .searchwrap{position:relative}
+  .searchwrap input{width:100%;padding-right:40px}
+  .qclear{position:absolute;right:6px;top:50%;transform:translateY(-50%);
+    width:28px;height:28px;padding:0;border:none;background:transparent;
+    color:var(--muted);font-size:20px;line-height:1;cursor:pointer;
+    border-radius:7px;display:none}
+  .qclear:hover{color:var(--paper);background:var(--panel2)}
+  .searchwrap input:not(:placeholder-shown)~.qclear{display:block}
+  input[type=search]::-webkit-search-cancel-button{display:none}
+  /* Fixed icon column so the text never wraps under the marker and the
+     eye runs straight down the page for scanning. */
+  .chg{display:grid;grid-template-columns:22px 1fr;gap:4px 10px;
+    align-items:start;padding:7px 0;border-bottom:1px solid var(--line)}
+  .chg:last-child{border-bottom:none}
+  .chg .ic{font-size:14px;line-height:1.5;text-align:center}
+  .pchip{display:inline-block;font-size:11.5px;border:1px solid var(--line);
+    background:var(--panel2);border-radius:20px;padding:3px 10px;margin:7px 6px 0 0}
+  .pchip.bad{color:var(--fired);border-color:var(--fired)}
   .err{color:#F09A9A}
   details summary{cursor:pointer;color:var(--muted);font-size:13px}
   a{color:var(--crimson)}
@@ -263,10 +320,13 @@
   </div>
   <div id="work">
   <div class="searchwrap">
-    <input id="q" placeholder="Find a stock, account or note" oninput="render()" autocomplete="off">
-    <button class="small" onclick="$('q').value='';render()">Clear</button>
+    <input id="q" placeholder="Find a stock, account or note" oninput="render()"
+      autocomplete="off" type="search">
+    <button id="qx" class="qclear" aria-label="Clear search"
+      onclick="$('q').value='';$('q').focus();render()">&times;</button>
   </div>
   <div id="tabs"></div>
+  <div id="filterbar"></div>
   <div id="sortbar"></div>
   <div id="sorts" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px;align-items:center"></div>
   <div id="list"></div>
@@ -276,7 +336,9 @@
       or "TCS above 3500". Use the ticker symbol, not the full company name.
       This fills the form below for you to check before adding &mdash; it's
       pattern matching, not AI, so always review what it understood.</p>
-    <input id="smart-in" style="margin-top:8px" placeholder="e.g. HDBFS 5% down from 732.50">
+    <input id="smart-in" style="margin-top:8px" oninput="smartPreview()"
+      placeholder="e.g. HDBFS 5% down from 732.50">
+    <div id="smartchips"></div>
     <div style="margin-top:10px"><button onclick="smartParse()">Understand</button></div>
     <p id="smart-msg" class="sub" style="margin-top:6px"></p>
   </div>
@@ -577,7 +639,7 @@ function renderHeld(){
             : '1y+')
         : '<span class="sub">no date</span>';
       const val=(d.price&&d.qty)?inr(d.price*d.qty):'';
-      return `<tr${deadSet.has(d.ticker)?' style="background:rgba(210,74,79,.07)"':''}>
+      return `<tr${deadSet.has(d.ticker)?' style="background:var(--loss-bg)"':''}>
         <td><b>${d.ticker}</b>${dm?' <span class="sub">idle</span>':''}</td>
         <td class="num sub" style="white-space:nowrap">${age}</td>
         <td class="num" style="color:${c}">${d.pl_pct>=0?'+':''}${d.pl_pct.toFixed(1)}%</td>
@@ -894,7 +956,7 @@ function renderPlan(){
     <tr><th>Stock</th><th>Worth</th><th>Gain</th><th>Held</th><th>Exit cost</th><th>Whose</th></tr>
     ${rows.map(r=>{
       const on=planSel.has(r.t);
-      return `<tr onclick="planToggle('${r.t}')" style="cursor:pointer${on?';background:rgba(99,185,138,.10)':''}">
+      return `<tr onclick="planToggle('${r.t}')" style="cursor:pointer${on?';background:var(--armed-bg)':''}">
         <td><span style="color:${on?'var(--armed)':'var(--muted)'}">${on?'\u2611':'\u2610'}</span>
           <b>${r.t}</b></td>
         <td class="num">${money(r.gross)}</td>
@@ -1045,19 +1107,32 @@ function render(){
   renderAttention();
   renderTax();
 
-  // tabs
-  const tabs=[['alerts','Alerts ('+alertsOnly.length+')'],
-              ['watch','Watch ('+watchOnly.length+')'],
-              ['all','All'],
-              ['peaks','\u26F0 Peaks'],
-              ['held','\u23F3 Held'],
-              ['costs','\u20B9 Leaks'],
-              ['plan','\u{1F9EE} Sell planner'],
-              ['month','\u{1F4C6} Month'],
-              ['news','\u{1F4F0} News']]
+  // Two rows, because these were never the same kind of control. The top row
+  // switches which VIEW you are looking at; the pills below filter the rows
+  // inside the holdings view and are meaningless anywhere else, so they are
+  // hidden on the analysis views rather than sitting there doing nothing.
+  const LIST_TABS=['alerts','watch','all'];
+  const isList=LIST_TABS.includes(tab)||tab.startsWith('acct:');
+  const views=[['alerts','Holdings'],
+               ['peaks','\u26F0 Peaks'],
+               ['held','\u23F3 Held'],
+               ['costs','\u20B9 Leaks'],
+               ['plan','\u{1F9EE} Sell planner'],
+               ['month','\u{1F4C6} Month'],
+               ['news','\u{1F4F0} News']];
+  $('tabs').innerHTML=views.map(([k,lab])=>{
+      const on=(k==='alerts')?isList:(tab===k);
+      return `<div class="vtab${on?' on':''}" onclick="setTab('${k}')">${lab}</div>`
+    }).join('');
+
+  const filters=[['alerts','Alerts ('+alertsOnly.length+')'],
+                 ['watch','Watch ('+watchOnly.length+')'],
+                 ['all','All']]
     .concat(accountsOf(alerts).map(x=>['acct:'+x,x]));
-  $('tabs').innerHTML=tabs.map(([k,lab])=>
-    `<div class="tab${tab===k?' on':''}" onclick="setTab('${k.replace(/'/g,"\\'")}')">${lab}</div>`).join('');
+  const fb=$('filterbar');
+  fb.style.display=isList?'':'none';
+  fb.innerHTML=isList?filters.map(([k,lab])=>
+    `<div class="tab${tab===k?' on':''}" onclick="setTab('${k.replace(/'/g,"\\'")}')">${lab}</div>`).join(''):'';
 
   const sorts=[['account','Account'],['pct','% gain'],['invested','Invested'],
                ['value','Value'],['pl','P&L \u20B9'],['ticker','Name']];
@@ -1161,6 +1236,16 @@ function render(){
 
   $('savebar').classList.toggle('show',dirty)}
 
+
+const ICO={
+  pause:'<svg viewBox="0 0 16 16" width="15" height="15" fill="currentColor"><rect x="4" y="3" width="3" height="10" rx="1"/><rect x="9" y="3" width="3" height="10" rx="1"/></svg>',
+  play:'<svg viewBox="0 0 16 16" width="15" height="15" fill="currentColor"><path d="M5 3.5v9l8-4.5z"/></svg>',
+  edit:'<svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M11.5 2.5l2 2L6 12l-3 1 1-3z"/></svg>',
+  del:'<svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 4.5h10M6.5 4.5V3h3v1.5M5 4.5l.6 8h4.8l.6-8"/></svg>',
+  rearm:'<svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M13 8a5 5 0 1 1-1.6-3.7M13 2v3h-3"/></svg>',
+  ack:'<svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 8.5l3 3 6-7"/></svg>',
+  chart:'<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12l4-5 3 3 5-6"/></svg>'};
+
 function alertCard(a,i){
   const f=firedEntry(a), rearming=f&&rearm.has(f.key);
   const status=!a.enabled?'paused':(f&&!rearming?'fired':'armed');
@@ -1172,7 +1257,7 @@ function alertCard(a,i){
         title="Select for a bulk action">${bulkSel.has(i)?'\u2611':'\u2610'}</span>
       <span class="tk">${a.ticker}</span><span class="ex">${a.exchange}</span>
       <a class="chart" href="${chartUrl(a)}" target="_blank" rel="noopener"
-        onclick="event.stopPropagation()" title="Open the live chart">chart</a>
+        onclick="event.stopPropagation()" title="Open the live chart">${ICO.chart}</a>
       <span class="chip ${status}">${status.toUpperCase()}</span>
     </div>
     ${(a.account||a.broker)?`<div class="sub" style="margin-top:2px">Held in: <span style="color:var(--paper)">${[a.account,a.broker].filter(Boolean).join(' / ')}</span></div>`:''}
@@ -1190,13 +1275,13 @@ function alertCard(a,i){
     ${rearming?`<div class="sub">Will re-arm on Save</div>`:''}
     ${f&&!rearming&&!f.acked&&!ack.has(f.key)?`<div class="sub" style="color:var(--fired)">Reminder ${f.sends||1} of 3 sent, not acknowledged</div>`:''}
     ${f&&ack.has(f.key)?`<div class="sub">Will acknowledge on Save</div>`:''}
-    ${a.note?`<div class="sub" style="margin-top:4px;font-style:italic">\u201C${a.note.replace(/</g,'&lt;')}\u201D</div>`:''}
-    <div class="actions">
-      ${f&&!rearming&&!f.acked&&!ack.has(f.key)?`<button class="small" onclick="doAck(${i})">Acknowledge</button>`:''}
-      ${f&&!rearming?`<button class="small" onclick="doRearm(${i})">Re-arm</button>`:''}
-      <button class="small" onclick="togglePause(${i})">${a.enabled?'Pause':'Resume'}</button>
-      <button class="small" onclick="editAlert(${i})">Edit</button>
-      <button class="small" onclick="delAlert(${i})">Delete</button>
+    ${a.note?`<div class="note">${a.note.replace(/</g,'&lt;')}</div>`:''}
+    <div class="actions iconrow">
+      ${f&&!rearming&&!f.acked&&!ack.has(f.key)?`<button class="ib" title="Acknowledge" aria-label="Acknowledge" onclick="doAck(${i})">${ICO.ack}</button>`:''}
+      ${f&&!rearming?`<button class="ib" title="Re-arm" aria-label="Re-arm" onclick="doRearm(${i})">${ICO.rearm}</button>`:''}
+      <button class="ib" title="${a.enabled?'Pause':'Resume'}" aria-label="${a.enabled?'Pause':'Resume'}" onclick="togglePause(${i})">${a.enabled?ICO.pause:ICO.play}</button>
+      <button class="ib" title="Edit" aria-label="Edit" onclick="editAlert(${i})">${ICO.edit}</button>
+      <button class="ib danger" title="Delete" aria-label="Delete" onclick="delAlert(${i})">${ICO.del}</button>
     </div>`;
   return card}
 
@@ -1227,10 +1312,30 @@ const STOPWORDS=new Set(['alert','alerts','me','when','if','becomes','become','i
   'percent','pct','stock','share','shares','on','at','with','value','moves','move','moved',
   'nse','bse','us','usa','nasdaq','nyse','get','let','know','pls','plz']);
 
-function smartParse(){
-  const raw=$('smart-in').value.trim();
-  const msg=$('smart-msg');
-  if(!raw){msg.textContent='Type something first.';msg.className='sub err';return}
+// Show the parse as it happens. The box is pattern matching, not AI, so the
+// only way to trust it is to watch it read your sentence back before you
+// commit anything.
+function smartPreview(){
+  const box=$('smartchips'); if(!box)return;
+  const txt=($('smart-in').value||'').trim();
+  if(!txt){box.innerHTML='';return}
+  const p=parseSmart(txt);
+  if(p.err){box.innerHTML=`<span class="pchip bad">${p.err}</span>`;return}
+  const t=p.alert_type;
+  const target=t==='percent'
+    ? (parseFloat(p.reference_price)*(1+(p.direction==='above'?1:-1)*parseFloat(p.alert_value)/100))
+    : parseFloat(p.alert_value);
+  const bits=[['Ticker',p.ticker],['Exchange',p.exchange],
+              t==='percent'?['Move',(p.direction==='above'?'+':'\u2212')+p.alert_value+'% from '+p.reference_price]:null,
+              ['Fires',p.direction+' \u20B9'+(isFinite(target)?target.toFixed(2):'?')]
+             ].filter(Boolean);
+  box.innerHTML=bits.map(([k,v])=>
+    `<span class="pchip"><span class="sub">${k}</span> <b>${v}</b></span>`).join('');
+}
+
+function parseSmart(raw){
+  raw=(raw||'').trim();
+  if(!raw)return {err:'Type something first.'};
   const lower=' '+raw.toLowerCase()+' ';
 
   // Direction: whichever keyword appears first in the sentence
@@ -1268,11 +1373,20 @@ function smartParse(){
   else if(/\bbse\b/i.test(raw))exchange='BSE';
   else if(/\bnse\b/i.test(raw))exchange='NSE';
 
-  if(!ticker){msg.textContent="Couldn't find a ticker symbol. Try including it plainly, e.g. \"RELIANCE 5% up from 1000\".";msg.className='sub err';return}
-  if(!value){msg.textContent="Couldn't find a number to use as the target"+(type==='percent'?' or reference':'')+". Try rephrasing with a clear number.";msg.className='sub err';return}
-  if(type==='percent'&&!reference){msg.textContent='Found the percent move but not a reference price. Try adding "from <price>".';msg.className='sub err';return}
-  if(!direction){msg.textContent="Couldn't tell if this is an upward or downward move — add \"above\"/\"up\" or \"below\"/\"down\".";msg.className='sub err';return}
+  if(!ticker)return {err:"Couldn't find a ticker symbol. Try including it plainly, e.g. \"RELIANCE 5% up from 1000\"."};
+  if(!value)return {err:"Couldn't find a number to use as the target"+(type==='percent'?' or reference':'')+". Try rephrasing with a clear number."};
+  if(type==='percent'&&!reference)return {err:'Found the percent move but not a reference price. Try adding "from <price>".'};
+  if(!direction)return {err:"Couldn't tell if this is an upward or downward move. Add \"above\"/\"up\" or \"below\"/\"down\"."};
+  return {ticker:ticker.toUpperCase(),exchange,alert_type:type,
+          direction,alert_value:value,reference_price:reference};
+}
 
+function smartParse(){
+  const msg=$('smart-msg');
+  const p=parseSmart($('smart-in').value);
+  if(p.err){msg.textContent=p.err;msg.className='sub err';return}
+  const {ticker,exchange,alert_type:type,direction,
+         alert_value:value,reference_price:reference}=p;
   $('n-tk').value=ticker.toUpperCase();
   $('n-ex').value=exchange;
   $('n-ty').value=type; refToggle();
@@ -1472,7 +1586,7 @@ function renderPerf(){
   box.innerHTML=`<div class="card">
     <div class="sub" style="font-size:11px;letter-spacing:.06em">PORTFOLIO SINCE ${first.d}</div>
     <svg viewBox="0 0 ${W} ${H}" style="width:100%;height:110px;margin-top:8px" preserveAspectRatio="none">
-      <path d="${area}" fill="${up?'rgba(99,185,138,.13)':'rgba(210,74,79,.13)'}"/>
+      <path d="${area}" fill="${up?'var(--armed-bg)':'var(--loss-bg)'}"/>
       <path d="${line}" fill="none" stroke="${col}" stroke-width="2"
         stroke-linejoin="round" stroke-linecap="round"/>
     </svg>
@@ -1494,9 +1608,11 @@ function renderAttention(){
              newlow:'\uD83D\uDD3B',ath:'\uD83D\uDE80',nearath:'\uD83D\uDC40'};
   $('attention').innerHTML=`<div class="card">
     <details class="fold" open><summary>WHAT CHANGED \u00B7 ${ev.length}</summary>
-    <div style="margin-top:8px">${ev.map(x=>`<div class="ev">
-      <span class="dot">${dot[x.kind]||'\u2022'}</span>
-      <div><b>${x.ticker}</b><div class="sub">${x.text}</div></div>
+    <div style="margin-top:8px">${ev.map(x=>`<div class="chg">
+      <span class="ic">${dot[x.kind]||'\u2022'}</span>
+      <b>${x.ticker}</b>
+      <span></span>
+      <span class="sub">${x.text}</span>
     </div>`).join('')}</div></details></div>`}
 
 function renderTax(){
