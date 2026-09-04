@@ -17,6 +17,7 @@ stock_alerts.py so either can be updated without touching the other.
 
 import csv
 import json
+import re
 import os
 import smtplib
 import time
@@ -60,6 +61,28 @@ def load_fired():
     return {}
 
 
+# A single share held for the annual report, the AGM, or a shareholder
+# quota in a subsidiary IPO is not a position. It has no thesis and no exit,
+# so dead-money and position-event logic produce pure noise about something
+# never intended to be sold. The marker lives in the note field so the CSV
+# schema is unchanged and the dashboard reads the same string.
+PERK_TAG = re.compile(r"#(perk|report|agm)\b", re.I)
+
+
+def is_perk(entry):
+    """True when any row behind this holding is tagged as a perk."""
+    note = entry.get("note") or ""
+    if PERK_TAG.search(note):
+        return True
+    for lot in entry.get("lots") or []:
+        if PERK_TAG.search(lot.get("note") or ""):
+            return True
+    for row in entry.get("rows") or []:
+        if PERK_TAG.search(row.get("note") or ""):
+            return True
+    return False
+
+
 DEAD_MONEY_RETURN = 8.0     # a return this weak, on money held over a year
 DEAD_MONEY_MIN_VALUE = 5000  # and a position at least this size
 
@@ -100,6 +123,8 @@ def dead_money(entries):
     out = []
     for e in entries:
         if not e.get("price") or not e.get("qty"):
+            continue
+        if is_perk(e):
             continue
         value = e["price"] * e["qty"]
         if value < DEAD_MONEY_MIN_VALUE:
@@ -394,6 +419,8 @@ def detect_position_events(entries, pstate):
     """
     events = []
     for e in entries:
+        if is_perk(e):
+            continue
         price, cost = e.get("price"), e.get("avg_cost")
         if not price or not cost:
             continue
@@ -706,7 +733,198 @@ def reminder_phrase(r):
 
 HISTORY_FILE = BASE_DIR / "portfolio_history.csv"
 HISTORY_FIELDS = ["date", "invested", "current", "pl", "pl_pct",
-                  "holdings", "winners", "losers"]
+                  "holdings", "winners", "losers",
+                  # Index closes, appended so past rows keep working: a row
+                  # written before this existed simply has them blank.
+                  "nifty50", "nifty500", "midcap", "smallcap"]
+
+
+# ----------------------------------------------------------------------
+# Benchmarks
+#
+# "Up 48%" means nothing on its own. Up 48% while the index did 60% is a
+# bad outcome wearing a green number. Four index levels are stored daily
+# alongside the portfolio so any period can be compared honestly later.
+#
+# Four extra quotes once a day. Negligible against the Actions budget.
+# ----------------------------------------------------------------------
+
+BENCHMARKS = {
+    "nifty50": "^NSEI",
+    "nifty500": "^CRSLDX",
+    "midcap": "NIFTY_MIDCAP_100.NS",
+    "smallcap": "^CNXSC",
+}
+
+
+def fetch_benchmarks():
+    """Index closes for today. Missing values are left blank, never guessed."""
+    try:
+        import yfinance as yf
+    except ImportError:
+        return {}
+    out = {}
+    for name, sym in BENCHMARKS.items():
+        try:
+            t = yf.Ticker(sym)
+            px = None
+            fi = getattr(t, "fast_info", None)
+            if fi is not None:
+                px = getattr(fi, "last_price", None)
+            if not px:
+                h = t.history(period="5d")
+                if h is not None and len(h) and "Close" in h:
+                    px = float(h["Close"].dropna().iloc[-1])
+            if px:
+                out[name] = round(float(px), 2)
+        except Exception:  # noqa: BLE001
+            continue
+    return out
+
+
+# ----------------------------------------------------------------------
+# XIRR
+#
+# "Up 48.5%" is the wrong number and always has been. It compares today's
+# value against money that went in across five years, treating a rupee
+# invested last month the same as one invested in 2021. XIRR is the
+# annualised rate that actually reconciles every cashflow with its date.
+#
+# The limitation, stated rather than hidden: only the OLDEST purchase date
+# per holding is known, so a position built up over several buys is treated
+# as a single outflow on that first date. That overstates the holding period
+# and therefore understates the annual rate. It is wrong in a known
+# direction, which is far more useful than a number that is wrong in an
+# unknown one.
+# ----------------------------------------------------------------------
+
+
+def xirr(flows, guess=0.15):
+    """Annualised return that reconciles dated cashflows. None if unsolvable.
+
+    Bisection rather than Newton: Newton diverges on the irregular, heavily
+    front-loaded flow patterns a real portfolio produces, and a wrong return
+    figure is worse than no figure.
+    """
+    flows = [(d, a) for d, a in flows if a]
+    if len(flows) < 2:
+        return None
+    if not (any(a < 0 for _, a in flows) and any(a > 0 for _, a in flows)):
+        return None
+    t0 = min(d for d, _ in flows)
+
+    def npv(rate):
+        total = 0.0
+        for d, a in flows:
+            years = (d - t0).days / 365.0
+            try:
+                total += a / ((1 + rate) ** years)
+            except (OverflowError, ZeroDivisionError):
+                return None
+        return total
+
+    lo, hi = -0.9999, 10.0
+    f_lo, f_hi = npv(lo), npv(hi)
+    if f_lo is None or f_hi is None or f_lo * f_hi > 0:
+        return None
+    for _ in range(200):
+        mid = (lo + hi) / 2
+        f_mid = npv(mid)
+        if f_mid is None:
+            return None
+        if abs(f_mid) < 1e-6:
+            break
+        if f_lo * f_mid < 0:
+            hi, f_hi = mid, f_mid
+        else:
+            lo, f_lo = mid, f_mid
+    return round(mid * 100, 2)
+
+
+def portfolio_xirr(entries):
+    """XIRR across every holding with a known purchase date.
+
+    Holdings without a date are excluded entirely rather than being dated
+    from a guess, and the count is reported so the figure can be read with
+    the right amount of trust.
+    """
+    today = datetime.now(IST).date()
+    flows, covered, skipped, value = [], 0, 0, 0.0
+    for e in entries:
+        if not e.get("price") or not e.get("qty") or not e.get("avg_cost"):
+            continue
+        days, basis = holding_age(e)
+        if not days or basis != "buy_date":
+            skipped += 1
+            continue
+        bought = today - timedelta(days=days)
+        flows.append((bought, -e["avg_cost"] * e["qty"]))
+        value += e["price"] * e["qty"]
+        covered += 1
+    if covered < 2:
+        return None
+    flows.append((today, value))
+    rate = xirr(flows)
+    if rate is None:
+        return None
+    invested = -sum(a for _, a in flows if a < 0)
+    return {"xirr": rate, "holdings": covered, "skipped": skipped,
+            "invested": round(invested, 2), "value": round(value, 2),
+            "absolute_pct": round((value / invested - 1) * 100, 2)
+            if invested else None}
+
+
+def month_review(rows, entries):
+    """A calendar-month summary of the portfolio against the indices.
+
+    Returns None until there is a row from far enough back, rather than
+    comparing against the oldest row available and calling a nine-day
+    stretch "the month".
+    """
+    if len(rows) < 2:
+        return None
+    latest = rows[-1]
+    target = (datetime.now(IST) - timedelta(days=30)).strftime("%Y-%m-%d")
+    older = [r for r in rows if r.get("date", "") <= target]
+    if not older:
+        return None
+    base = older[-1]
+
+    def num(r, k):
+        try:
+            return float(r.get(k) or 0)
+        except (TypeError, ValueError):
+            return 0.0
+
+    # Money added during the month is not performance, so the comparison is
+    # made on value net of new investment rather than on the raw total.
+    inv_then, inv_now = num(base, "invested"), num(latest, "invested")
+    cur_then, cur_now = num(base, "current"), num(latest, "current")
+    added = inv_now - inv_then
+    if not cur_then:
+        return None
+    ret = ((cur_now - added) / cur_then - 1) * 100
+
+    idx = {}
+    for name in BENCHMARKS:
+        a, b = num(base, name), num(latest, name)
+        if a and b:
+            idx[name] = round((b / a - 1) * 100, 2)
+
+    priced = [e for e in entries if e.get("day_pct") is not None]
+    movers = sorted(priced, key=lambda e: -(e.get("pl_abs") or 0))
+    return {
+        "from": base.get("date"), "to": latest.get("date"),
+        "return_pct": round(ret, 2),
+        "value_then": round(cur_then, 2), "value_now": round(cur_now, 2),
+        "added": round(added, 2),
+        "indices": idx,
+        "winners": int(num(latest, "winners")), "losers": int(num(latest, "losers")),
+        "best": [{"ticker": e["ticker"], "pl_abs": round(e.get("pl_abs") or 0),
+                  "pl_pct": e.get("pl_pct")} for e in movers[:5]],
+        "worst": [{"ticker": e["ticker"], "pl_abs": round(e.get("pl_abs") or 0),
+                   "pl_pct": e.get("pl_pct")} for e in movers[-5:][::-1]],
+    }
 
 
 def append_history(digest):
@@ -732,7 +950,9 @@ def append_history(digest):
                   if (e.get("pl_pct") or 0) > 0)
     losers = sum(1 for e in digest["entries"]
                  if (e.get("pl_pct") or 0) < 0)
+    bench = fetch_benchmarks()
     rows.append({"date": today,
+                 **{k: f"{v:.2f}" for k, v in bench.items()},
                  "invested": f"{t['invested']:.2f}",
                  "current": f"{t['current']:.2f}",
                  "pl": f"{t['pl_abs']:.2f}",
@@ -1077,6 +1297,8 @@ def build():
               "entries": entries}
     DIGEST_FILE.write_text(json.dumps(digest, indent=2) + "\n")
     digest["history"] = append_history(digest) or []
+    digest["month"] = month_review(digest["history"], digest["entries"])
+    digest["xirr"] = portfolio_xirr(digest["entries"])
     rem_due, rem_errors = load_reminders()
     digest["reminders"] = [{**r, "date": r["date"].strftime("%Y-%m-%d")}
                            for r in rem_due]
