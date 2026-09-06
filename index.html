@@ -1327,7 +1327,11 @@ const EYE_SVG='<svg viewBox="0 0 16 16" width="16" height="16" fill="none" '
 // any blurred figure reveals it for a few seconds without turning privacy
 // off entirely, so a quick self-check does not require re-hiding afterwards.
 const PRIVACY_KEY='ad_privacy';
-function privacyOn(){return localStorage.getItem(PRIVACY_KEY)==='1'}
+// Fail safe, not fail open: no stored preference (first load, a cleared
+// browser, a new device) now means HIDDEN. The point of this feature is
+// that someone standing next to you never sees the total by accident, and
+// an "off by default" reads exactly the number this exists to protect.
+function privacyOn(){return localStorage.getItem(PRIVACY_KEY)!=='0'}
 function applyPrivacy(){
   document.body.classList.toggle('privacy',privacyOn());
   const b=$('privbtn'); if(b)b.innerHTML=EYE_SVG;
