@@ -494,7 +494,16 @@ function csvSafe(v){v=(v||'').toString();return /[",\n]/.test(v)?'"'+v.replace(/
 
 const SUFFIX={NSE:'.NS',BSE:'.BO',US:''};
 function symbol(a){return a.ticker+SUFFIX[a.exchange]}
-function alertKey(a){return symbol(a)+'|'+a.alert_type+'|'+parseFloat(a.alert_value)+'|'+a.direction+'|'+(a.alert_type==='percent'?parseFloat(a.reference_price):'')}
+// Trail alerts get their own branch because the backend's id for one is
+// SYMBOL|trail|VALUE only (stock_alerts.py), never direction or reference,
+// since a peak that moved would otherwise mint a brand-new alert every day
+// and never re-fire. Every OTHER type keeps the full key. Before this fix,
+// firedEntry() computed a different key than the backend actually writes
+// fired records under for a trail alert, so the FIRED badge, re-arm, ack
+// and snooze silently never worked for any trailing stop that fired.
+function alertKey(a){
+  if(a.alert_type==='trail')return symbol(a)+'|trail|'+parseFloat(a.alert_value);
+  return symbol(a)+'|'+a.alert_type+'|'+parseFloat(a.alert_value)+'|'+a.direction+'|'+(a.alert_type==='percent'?parseFloat(a.reference_price):'')}
 function firedEntry(a){const k=alertKey(a);return state[k]?{key:k,...state[k]}:null}
 function trigger(a){
   if(a.alert_type==='watch')return null;
@@ -508,8 +517,10 @@ function trigger(a){
   const r=isFinite(parseFloat(a.reference_price))?parseFloat(a.reference_price):parseFloat(a.avg_cost);
   return a.direction==='above'?r*(1+v/100):r*(1-v/100)}
 function trailPeak(a){
-  const key=a.ticker+(a.exchange==='NSE'?'.NS':a.exchange==='BSE'?'.BO':'')
-    +'|trail|'+parseFloat(a.alert_value);
+  // One key builder now, not two. This used to duplicate alertKey's trail
+  // branch with its own inline exchange-suffix mapping, and the two were
+  // never actually verified to agree until they were found to disagree.
+  const key=alertKey(a);
   const rec=(state&&state._trail_peaks)?state._trail_peaks[key]:null;
   return rec&&rec.peak?rec.peak:null}
 function cur(a){return a.exchange==='US'?'$':'\u20B9'}
@@ -1224,10 +1235,54 @@ function xirrCard(){
   </div>`;
 }
 
+// Beta: is the combined family portfolio more or less volatile than the
+// index it's benchmarked against. Computed from the same daily rows the
+// Month tab already reads (portfolio_history.csv, with nifty50 alongside
+// current value since the benchmark feature started recording it). No new
+// data collection, so like the Month tab itself this starts empty and
+// fills in day by day.
+function computeBeta(rows){
+  const pts=[];
+  for(let i=1;i<rows.length;i++){
+    const a=rows[i-1], b=rows[i];
+    const pv0=parseFloat(a.current), pv1=parseFloat(b.current);
+    const iv0=parseFloat(a.nifty50), iv1=parseFloat(b.nifty50);
+    if(!(pv0>0)||!(iv0>0)||!isFinite(pv1)||!isFinite(iv1))continue;
+    pts.push({p:(pv1/pv0-1), i:(iv1/iv0-1)});
+  }
+  if(pts.length<10)return null;              // too few points to mean anything
+  const mean=k=>pts.reduce((s,x)=>s+x[k],0)/pts.length;
+  const mp=mean('p'), mi=mean('i');
+  let cov=0, varI=0;
+  pts.forEach(x=>{cov+=(x.p-mp)*(x.i-mi); varI+=(x.i-mi)**2});
+  if(varI===0)return null;
+  return {beta:cov/varI, days:pts.length};
+}
+
 function renderMonth(){
   const L=$('list'), m=digestRaw&&digestRaw.month;
+  const rawHist=(digestRaw&&digestRaw.history)||[];
+  const beta=computeBeta(rawHist);
+  const betaCard=beta?`<div class="card">
+      <div class="sub">Volatility relative to the Nifty 50, ${beta.days} trading
+        days of history</div>
+      <div class="ttl" style="font-size:28px;margin-top:2px">
+        ${beta.beta.toFixed(2)}<span style="font-size:16px">\u00D7</span></div>
+      <div class="sub" style="margin-top:6px">${
+        beta.beta>1.15?'Swings more than the index, up and down alike.'
+        :beta.beta<0.85?'Moves less than the index, up and down alike.'
+        :'Moves roughly in line with the index.'}
+        A reading of 1.00\u00D7 means the same average daily move as the
+        Nifty 50; 1.50\u00D7 means roughly 50% more.</div>
+    </div>`:`<div class="card">
+      <div class="ttl">Not enough history for beta yet</div>
+      <p class="sub" style="margin-top:6px">Needs at least 10 daily
+      readings of both the portfolio and the Nifty 50. It fills in on its
+      own as the digest keeps running; nothing to do here.</p>
+    </div>`;
+
   if(!m){
-    L.innerHTML=xirrCard()+`<div class="card"><div class="ttl">Not enough history yet</div>
+    L.innerHTML=xirrCard()+betaCard+`<div class="card"><div class="ttl">Not enough history yet</div>
       <p class="sub" style="margin-top:6px">This needs about a month of daily
       digest runs before it can compare anything. It fills itself in as
       portfolio_history.csv grows, and index levels are recorded from today
@@ -1241,7 +1296,7 @@ function renderMonth(){
       :beat===0?'behind every index'
       :`ahead of ${beat} of ${idx.length}`)
     : 'no index levels recorded yet';
-  L.innerHTML=xirrCard()+`
+  L.innerHTML=xirrCard()+betaCard+`
   <div class="card">
     <div class="sub">${m.from} to ${m.to}</div>
     <div class="ttl" style="font-size:24px;margin-top:2px">
@@ -1350,6 +1405,51 @@ document.addEventListener('click',e=>{
 });
 applyPrivacy();
 
+
+// --- Audit trail -----------------------------------------------------------
+// Built entirely from alerts_state.json, already loaded as `state`. No new
+// file, no schema change, so this carries none of the risk a new persisted
+// log would. What it can show is bounded by what the scheduler already
+// records: fired time, send count, acknowledgement, snooze. It cannot show
+// when an alert was first CREATED, because holdings.csv has no timestamp
+// column for that today; adding one is a small separate change if wanted.
+function renderAudit(){
+  const L=$('list');
+  const rows=[];
+  alerts.forEach(a=>{
+    const f=firedEntry(a); if(!f)return;
+    rows.push({t:a.ticker,kind:a.alert_type,rec:f,who:a.account});
+  });
+  if(!rows.length){
+    L.innerHTML=`<div class="card"><div class="ttl">Nothing fired yet</div>
+      <p class="sub" style="margin-top:6px">This lists trigger history for
+      alerts that have fired: when, how many reminders, and whether it was
+      acknowledged. Nothing has fired since alerts_state.json was last
+      written.</p></div>`;return}
+  rows.sort((a,b)=>(b.rec.fired_at_utc||'').localeCompare(a.rec.fired_at_utc||''));
+  const fmt=iso=>{if(!iso)return '\u2014';
+    try{return new Date(iso).toLocaleString('en-IN',
+      {dateStyle:'medium',timeStyle:'short'})}catch(e){return iso}};
+  L.innerHTML=`<div class="card" style="padding:0;overflow-x:auto"><table class="pk">
+    <tr><th>Stock</th><th>Fired</th><th>Sends</th><th>Last sent</th><th>Status</th></tr>
+    ${rows.map(r=>{
+      const acked=r.rec.acked;
+      const snoozed=r.rec.snooze_until && r.rec.snooze_until>=new Date().toISOString().slice(0,10);
+      const status=acked?`<span style="color:var(--armed)">acknowledged ${fmt(r.rec.acked_at_utc)}</span>`
+        :snoozed?`<span style="color:var(--fired)">muted until ${r.rec.snooze_until}</span>`
+        :'<span style="color:var(--crimson)">pending</span>';
+      return `<tr><td><b>${r.t}</b><span class="sub"> ${r.kind}</span></td>
+        <td class="sub">${fmt(r.rec.fired_at_utc)}</td>
+        <td class="num sub">${r.rec.sends||1}</td>
+        <td class="sub">${fmt(r.rec.last_send_utc)}</td>
+        <td>${status}</td></tr>`}).join('')}
+    </table></div>
+    <div class="card sub" style="font-size:11.5px">This shows trigger and
+    acknowledgement history only. Creation time isn't recorded anywhere
+    today, since holdings.csv carries no timestamp column, so "when was
+    this alert set up" can't be answered from here.</div>`;
+}
+
 function setTab(t){tab=t;render()}
 
 function accountsOf(list){
@@ -1371,7 +1471,8 @@ function render(){
   // switches which VIEW you are looking at; the pills below filter the rows
   // inside the holdings view and are meaningless anywhere else, so they are
   // hidden on the analysis views rather than sitting there doing nothing.
-  const LIST_TABS=['alerts','watch','all','perks','broken'];
+  const LIST_TABS=['alerts','watch','all','perks','broken']
+    .concat(allGoals().map(g=>'goal:'+g));
   const isList=LIST_TABS.includes(tab)||tab.startsWith('acct:');
   const views=[['alerts','Holdings'],
                ['peaks','\u26F0 Peaks'],
@@ -1379,7 +1480,8 @@ function render(){
                ['costs','\u20B9 Leaks'],
                ['plan','\u{1F9EE} Sell planner'],
                ['month','\u{1F4C6} Month'],
-               ['news','\u{1F4F0} News']];
+               ['news','\u{1F4F0} News'],
+              ['audit','\u{1F550} Audit']];
   $('tabs').innerHTML=views.map(([k,lab])=>{
       const on=(k==='alerts')?isList:(tab===k);
       return `<div class="vtab${on?' on':''}" onclick="setTab('${k}')">${lab}</div>`
@@ -1387,11 +1489,13 @@ function render(){
 
   const perkN=alerts.filter(isPerk).length;
   const badN=alerts.filter(a=>incomplete(a)).length;
+  const goals=allGoals();
   const filters=[['alerts','Alerts ('+alertsOnly.length+')'],
                  ['watch','Watch ('+watchOnly.length+')'],
                  ['all','All']]
     .concat(perkN?[['perks','\u{1F4DA} Perks ('+perkN+')']]:[])
     .concat(badN?[['broken','\u26A0 Incomplete ('+badN+')']]:[])
+    .concat(goals.map(g=>['goal:'+g,'\u{1F3AF} '+g]))
     .concat(accountsOf(alerts).map(x=>['acct:'+x,x]));
   const fb=$('filterbar');
   fb.style.display=isList?'':'none';
@@ -1408,7 +1512,8 @@ function render(){
     + (combine?'\u25CF ':'') + 'Combine accounts</div>';
 
   const analysis={peaks:renderPeaks,held:renderHeld,costs:renderCosts,
-                  plan:renderPlan,month:renderMonth,news:renderNews};
+                  plan:renderPlan,month:renderMonth,news:renderNews,
+                  audit:renderAudit};
   $('sortbar').style.display=analysis[tab]?'none':'';
   if(analysis[tab]){analysis[tab]();$('savebar').classList.toggle('show',dirty);
     bulkDock();return}
@@ -1425,6 +1530,7 @@ function render(){
   else if(tab==='watch')show=show.filter(x=>isWatch(x.a)&&!isPerk(x.a));
   else if(tab==='perks')show=show.filter(x=>isPerk(x.a));
   else if(tab==='broken')show=show.filter(x=>incomplete(x.a));
+  else if(tab.startsWith('goal:'))show=show.filter(x=>goalOf(x.a)===tab.slice(5));
   else if(tab.startsWith('acct:'))show=show.filter(x=>(x.a.account||'Unassigned')===tab.slice(5));
 
   if(!show.length){
@@ -1662,6 +1768,20 @@ function overlapNote(){
 const PERK_RE=/#(perk|report|agm)\b/i;
 function isWatch(a){return a.alert_type==='watch'}
 function isPerk(a){return PERK_RE.test(a.note||'')}
+
+// Same mechanism as #perk: a tag in the note field a person already fills
+// in, not a new column, not a new form field. #goal:College Fund groups
+// holdings by intent rather than by account or ticker, which is the one
+// axis nothing else on this dashboard cuts along.
+const GOAL_RE=/#goal:([^\s#][^#]*)/i;
+function goalOf(a){
+  const m=(a.note||'').match(GOAL_RE);
+  return m?m[1].trim():null}
+function allGoals(){
+  const s=new Set();
+  alerts.forEach(a=>{const g=goalOf(a); if(g)s.add(g)});
+  return [...s].sort()}
+
 function perkRTA(a){
   const m=(a.note||'').match(/RTA:\s*([A-Za-z ]+)/i);
   return m?m[1].trim():''}
