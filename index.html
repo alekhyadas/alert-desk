@@ -290,6 +290,20 @@
     padding:10px 14px;box-shadow:var(--lift);max-width:calc(100vw - 24px);
     transition:transform .18s ease;pointer-events:none}
   #bulkdock.show{transform:translateX(-50%) translateY(0);pointer-events:auto}
+  /* Same selector list as the tabular-nums rule above, because that list is
+     already every element that shows a rupee figure or a share count. A
+     second list here would drift from the first the moment either changes. */
+  /* Scoped to just the summary card: the total, the day change, and the
+     profit/loss line. Tables, alert cards and everything else stay
+     readable, since blurring those made the dashboard unusable with
+     someone standing next to you rather than merely private. */
+  body.privacy .mast .big,body.privacy .mast .pl,body.privacy .pmask{
+    filter:blur(7px);cursor:pointer;user-select:none;
+    transition:filter .12s ease}
+  body.privacy .peek{filter:none}
+  #privbtn svg .lid{transition:transform .15s ease;transform-origin:8px 8px}
+  body.privacy #privbtn svg .lid{transform:scaleY(0.35)}
+  body.privacy #privbtn{color:var(--brand)}
   .err{color:#F09A9A}
   details summary{cursor:pointer;color:var(--muted);font-size:13px}
   a{color:var(--crimson)}
@@ -304,6 +318,8 @@
 <body>
 <header>
   <div class="brand">Alert <em>Desk</em></div>
+  <button id="privbtn" class="ib" title="Hide amounts" aria-label="Toggle privacy"
+    onclick="togglePrivacy()" style="margin-left:auto"></button>
   <div id="runline">Not connected</div>
 </header>
 
@@ -406,6 +422,8 @@
     repo. The scheduler picks up the new list on its next run (within 30 minutes
     during market hours). Re-arming a fired alert also takes effect on Save.
     <div style="margin-top:8px">
+      <a href="#" onclick="exportCSV();return false">Export everything to CSV</a>
+      <span class="sub"> \u00B7 </span>
       <a href="#" onclick="setKiteKey();return false">Kite execute buttons</a>
       <span class="sub"> \u00B7 </span>
       <a href="#" onclick="forget();return false">Disconnect and forget token</a></div>
@@ -660,6 +678,19 @@ function renderHeld(){
       <b>${inr(idle)}</b> <span class="sub">held over a year, under 8% total return,
       across ${dead.length} holdings</span></div>`;
   const deadSet=new Set(dead.map(d=>d.ticker));
+  // Anything held over eighteen months returning less than an FD is stated
+  // as its own count, because "up 6%" over four years reads as a win and is
+  // not one.
+  const behind=rows.filter(d=>{
+    if(!d.held_days||d.held_days<548||d.pl_pct===undefined)return false;
+    const y=d.held_days/365.25;
+    return (Math.pow(1+d.pl_pct/100,1/y)-1)*100 < FD_RATE;});
+  const behindVal=behind.reduce((s,d)=>s+(d.price*d.qty||0),0);
+  if(behind.length)
+    head+=`<div class="card" style="padding:10px 14px">
+      <b>${inr(behindVal)}</b> <span class="sub">across ${behind.length} holdings
+      held over eighteen months has returned less than ${FD_RATE}% a year,
+      which is roughly what a fixed deposit pays with none of the risk.</span></div>`;
   L.innerHTML=head
   + '<div class="card" style="padding:0;overflow-x:auto"><table class="pk">'
   + '<tr><th>Stock</th><th>Held</th><th>Return</th><th>Per year</th><th>Value</th></tr>'
@@ -668,6 +699,9 @@ function renderHeld(){
       const yrs=d.held_days?d.held_days/365.25:null;
       const ann=(yrs&&yrs>0&&d.pl_pct!==undefined)
         ? (Math.pow(1+d.pl_pct/100,1/yrs)-1)*100 : null;
+      // A stock returning 4% a year while an FD pays 7% is not "up a bit",
+      // it is behind the risk-free option while carrying all the risk.
+      const beatsFD=ann===null?null:ann>=FD_RATE;
       const c=d.pl_pct>=0?'var(--armed)':'var(--crimson)';
       const age=d.held_days
         ? (d.held_basis==='buy_date'
@@ -680,7 +714,9 @@ function renderHeld(){
         <td><b>${d.ticker}</b>${dm?' <span class="sub">idle</span>':''}</td>
         <td class="num sub" style="white-space:nowrap">${age}</td>
         <td class="num" style="color:${c}">${d.pl_pct>=0?'+':''}${d.pl_pct.toFixed(1)}%</td>
-        <td class="num sub">${ann===null?'':(ann>=0?'+':'')+ann.toFixed(1)+'%'}</td>
+        <td class="num" style="color:${beatsFD===null?'var(--muted)':(beatsFD?'var(--armed)':'var(--fired)')}">
+          ${ann===null?'':(ann>=0?'+':'')+ann.toFixed(1)+'%'}
+          ${beatsFD===false?' <span title="behind a fixed deposit">\u{1FAA8}</span>':''}</td>
         <td class="num sub">${val}</td></tr>`}).join('')
   + '</table></div>'
   + '<div class="card sub" style="font-size:11.5px">Rows shaded red have been held '
@@ -906,6 +942,9 @@ function renderCosts(){
 //
 // Nothing here recommends selling. It prices a decision you are considering.
 const STCG_RATE=0.20, LTCG_RATE=0.125;
+// Roughly what an Indian bank FD pays. The point of comparison for money
+// that has been sitting in a stock for years going nowhere.
+const FD_RATE=7.0;
 let planSel=new Set();
 
 function planRows(){
@@ -1267,6 +1306,46 @@ function renderNews(){
       </a>`).join('');
 }
 
+// Slash to search, Escape to clear. Both are muscle memory from every other
+// terminal, and typing into a field must never trigger them.
+document.addEventListener('keydown',e=>{
+  const inField=/^(INPUT|TEXTAREA|SELECT)$/.test((e.target.tagName||''));
+  if(e.key==='/'&&!inField){e.preventDefault();$('q').focus();$('q').select();return}
+  if(e.key==='Escape'){
+    if(bulkSel.size){bulkNone();return}
+    if($('q').value){$('q').value='';render();$('q').blur()}}
+});
+
+
+const EYE_SVG='<svg viewBox="0 0 16 16" width="16" height="16" fill="none" '
+  +'stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">'
+  +'<path class="lid" d="M1 8s2.6-4.5 7-4.5S15 8 15 8s-2.6 4.5-7 4.5S1 8 1 8z"/>'
+  +'<circle cx="8" cy="8" r="2"/></svg>';
+
+// Amounts blur on a body class, kept because someone glancing at the screen
+// should not learn the family's net worth. The preference persists; a tap on
+// any blurred figure reveals it for a few seconds without turning privacy
+// off entirely, so a quick self-check does not require re-hiding afterwards.
+const PRIVACY_KEY='ad_privacy';
+function privacyOn(){return localStorage.getItem(PRIVACY_KEY)==='1'}
+function applyPrivacy(){
+  document.body.classList.toggle('privacy',privacyOn());
+  const b=$('privbtn'); if(b)b.innerHTML=EYE_SVG;
+}
+function togglePrivacy(){
+  localStorage.setItem(PRIVACY_KEY, privacyOn()?'0':'1');
+  applyPrivacy();
+}
+document.addEventListener('click',e=>{
+  if(!privacyOn())return;
+  const el=e.target.closest('.mast .big,.mast .pl,.pmask');
+  if(!el||el.id==='privbtn')return;
+  el.classList.add('peek');
+  clearTimeout(el._peekTimer);
+  el._peekTimer=setTimeout(()=>el.classList.remove('peek'),2500);
+});
+applyPrivacy();
+
 function setTab(t){tab=t;render()}
 
 function accountsOf(list){
@@ -1428,7 +1507,8 @@ const ICO={
   del:'<svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 4.5h10M6.5 4.5V3h3v1.5M5 4.5l.6 8h4.8l.6-8"/></svg>',
   rearm:'<svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M13 8a5 5 0 1 1-1.6-3.7M13 2v3h-3"/></svg>',
   ack:'<svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 8.5l3 3 6-7"/></svg>',
-  chart:'<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12l4-5 3 3 5-6"/></svg>'};
+  chart:'<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12l4-5 3 3 5-6"/></svg>',
+  snooze:'<svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="6"/><path d="M6 6h4l-4 4h4"/></svg>'};
 
 
 // Published TERs, checked against the AMC listings rather than assumed.
@@ -1488,11 +1568,11 @@ function acctColour(name){
 //
 // Free since March 2025: order and account APIs carry no charge. The
 // paid tier is only for streaming and historical data.
-// Publisher api_key. This is public by design: Zerodha's own embeddable
-// trade buttons carry it in page source, and it can do nothing without your
-// Kite login. The api_SECRET is the sensitive half and appears nowhere here.
-const KITE_KEY_DEFAULT='owqm39urvjasxm7h';
-function kiteKey(){return localStorage.getItem('kiteapikey')||KITE_KEY_DEFAULT}
+// Publisher api_key, entered once and kept in this browser only. Even though
+// a Publisher key is public by design and useless without your Kite login,
+// there is no reason to commit one to a public repo. The api_SECRET is the
+// sensitive half and never appears anywhere in this file.
+function kiteKey(){return localStorage.getItem('kiteapikey')||''}
 function setKiteKey(){
   const k=prompt('Kite Connect api_key (from developers.kite.trade, Personal plan is free). Leave blank to remove.',kiteKey());
   if(k===null)return;
@@ -1607,9 +1687,81 @@ function earningsPill(a){
     n===0?'Results today':n===1?'Results tomorrow':'Results in '+n+'d'}</span>`;
 }
 
+
+// --- Snooze ---------------------------------------------------------------
+// A fired alert had two exits: re-arm it (and be told again tomorrow) or
+// delete it (and lose the target). Snooze is the missing third. The date
+// lives in alerts_state.json alongside the fired record, so the scheduler
+// reads it without a new file or a schema change.
+const SNOOZE_DAYS=7;
+let snooze=new Map();
+function doSnooze(i,days){
+  const f=firedEntry(alerts[i]); if(!f)return;
+  const until=new Date(Date.now()+ (days||SNOOZE_DAYS)*86400000);
+  snooze.set(f.key, until.toISOString().slice(0,10));
+  ack.delete(f.key); rearm.delete(f.key);
+  markDirty(); toast(`Muted until ${until.toLocaleDateString('en-IN',{dateStyle:'medium'})}`);
+}
+function snoozedUntil(a){
+  const f=firedEntry(a); if(!f)return null;
+  if(snooze.has(f.key))return snooze.get(f.key);
+  return f.snooze_until||null;
+}
+function snoozeActive(a){
+  const u=snoozedUntil(a);
+  return u && u>=new Date().toISOString().slice(0,10) ? u : null;
+}
+
+// --- Stale data -----------------------------------------------------------
+// Silence during market hours looks identical to calm. It is not: it usually
+// means the scheduler stopped and every price on screen is fiction.
+function marketOpenNow(){
+  const n=new Date();
+  const ist=new Date(n.toLocaleString('en-US',{timeZone:'Asia/Kolkata'}));
+  const d=ist.getDay(); if(d===0||d===6)return false;
+  const m=ist.getHours()*60+ist.getMinutes();
+  return m>=555 && m<=930;          // 09:15 to 15:30 IST
+}
+function staleCheck(iso){
+  if(!iso||!marketOpenNow())return null;
+  const mins=(Date.now()-new Date(iso).getTime())/60000;
+  return mins>25?Math.round(mins):null;
+}
+
+// --- Export ---------------------------------------------------------------
+// One click to a spreadsheet, for your CA or for a second opinion, without
+// asking anyone to clone a private repo.
+function exportCSV(){
+  const cols=['ticker','exchange','account','broker','qty','avg_cost','buy_date',
+              'lt_qty','price','invested','current','pl_abs','pl_pct',
+              'held_days','ath','off_ath_pct','sector','alert_type',
+              'alert_value','direction','note'];
+  const seen=new Set(), out=[cols.join(',')];
+  const esc=v=>{const s=(v===undefined||v===null)?'':String(v);
+    return /[",\n]/.test(s)?'"'+s.replace(/"/g,'""')+'"':s};
+  alerts.forEach(a=>{
+    const d=digestBy[a.ticker]||{};
+    const q=parseFloat(a.qty), c=parseFloat(a.avg_cost);
+    const key=a.ticker+'|'+a.account+'|'+a.alert_type+'|'+a.alert_value;
+    if(seen.has(key))return; seen.add(key);
+    out.push(cols.map(k=>{
+      if(k in a)return esc(a[k]);
+      if(k==='invested')return esc(isFinite(q)&&isFinite(c)?(q*c).toFixed(2):'');
+      if(k==='current')return esc(d.price&&isFinite(q)?(d.price*q).toFixed(2):'');
+      return esc(d[k]);
+    }).join(','));
+  });
+  const blob=new Blob([out.join('\n')],{type:'text/csv;charset=utf-8'});
+  const url=URL.createObjectURL(blob), a=document.createElement('a');
+  a.href=url; a.download='alert-desk-'+new Date().toISOString().slice(0,10)+'.csv';
+  a.click(); URL.revokeObjectURL(url);
+  toast(out.length-1+' rows exported');
+}
+
 function alertCard(a,i){
   const f=firedEntry(a), rearming=f&&rearm.has(f.key);
-  const status=!a.enabled?'paused':(f&&!rearming?'fired':'armed');
+  const snoozedTo=snoozeActive(a);
+  const status=!a.enabled?'paused':(snoozedTo?'paused':(f&&!rearming?'fired':'armed'));
   const gaps=incomplete(a);
   const card=document.createElement('div');
   card.className='card alert'+(dirty?' dirty':'')+(gaps?' incomplete':'')
@@ -1645,12 +1797,14 @@ function alertCard(a,i){
     ${a.alert_type==='trail'?trailBar(a):''}
     ${f&&!rearming?`<div class="sub">Fired ${new Date(f.fired_at_utc).toLocaleString('en-IN',{dateStyle:'medium',timeStyle:'short'})} at ${cur(a)}${fmt(f.fired_price)}</div>`:''}
     ${rearming?`<div class="sub">Will re-arm on Save</div>`:''}
+    ${snoozedTo?`<div class="sub" style="color:var(--fired)">Muted until ${snoozedTo}</div>`:''}
     ${f&&!rearming&&!f.acked&&!ack.has(f.key)?`<div class="sub" style="color:var(--fired)">Reminder ${f.sends||1} of 3 sent, not acknowledged</div>`:''}
     ${f&&ack.has(f.key)?`<div class="sub">Will acknowledge on Save</div>`:''}
     ${a.note?`<div class="note">${a.note.replace(/</g,'&lt;')}</div>`:''}
     <div class="actions iconrow">
       ${f&&!rearming&&!f.acked&&!ack.has(f.key)?`<button class="ib" title="Acknowledge" aria-label="Acknowledge" onclick="doAck(${i})">${ICO.ack}</button>`:''}
       ${f&&!rearming?`<button class="ib" title="Re-arm" aria-label="Re-arm" onclick="doRearm(${i})">${ICO.rearm}</button>`:''}
+      ${f&&!rearming&&!snoozedTo?`<button class="ib" title="Mute for ${SNOOZE_DAYS} days" aria-label="Snooze" onclick="doSnooze(${i})">${ICO.snooze}</button>`:''}
       <button class="ib" title="${a.enabled?'Pause':'Resume'}" aria-label="${a.enabled?'Pause':'Resume'}" onclick="togglePause(${i})">${a.enabled?ICO.pause:ICO.play}</button>
       <button class="ib" title="Edit" aria-label="Edit" onclick="editAlert(${i})">${ICO.edit}</button>
       <button class="ib danger" title="Delete" aria-label="Delete" onclick="delAlert(${i})">${ICO.del}</button>
@@ -1834,7 +1988,9 @@ async function loadAll(){
     if(runs&&runs.workflow_runs&&runs.workflow_runs.length){
       const r=runs.workflow_runs[0];
       const when=new Date(r.updated_at).toLocaleString('en-IN',{dateStyle:'medium',timeStyle:'short'});
-      $('runline').innerHTML=`Last check: ${when} \u00B7 ${r.conclusion==='success'?'ok':(r.status==='in_progress'?'running':'<span class="err">'+(r.conclusion||r.status)+'</span>')}`}
+      const late=staleCheck(r.updated_at);
+      $('runline').innerHTML=`Last check: ${when} \u00B7 ${r.conclusion==='success'?'ok':(r.status==='in_progress'?'running':'<span class="err">'+(r.conclusion||r.status)+'</span>')}`
+        + (late?` <span class="err">\u00B7 ${late} min old while the market is open, prices on screen may be stale</span>`:'')}
   }catch(e){
     // Swallowing this as "unknown" hid the actual cause for weeks. The call
     // needs Actions: read on the token; Contents alone returns 403.
@@ -1842,7 +1998,7 @@ async function loadAll(){
     $('runline').innerHTML=perm
       ? 'Last check: <span class="err">token needs Actions: read</span>'
       : 'Last check: <span class="err">could not reach GitHub</span>';}
-  dirty=false;rearm.clear();ack.clear();render()}
+  dirty=false;rearm.clear();ack.clear();snooze.clear();render()}
 
 async function saveAll(){
   $('savebtn').disabled=true;
@@ -1853,6 +2009,7 @@ async function saveAll(){
     csvSha=res.content.sha;
     if(rearm.size||ack.size){
       rearm.forEach(k=>delete state[k]);
+      snooze.forEach((until,k)=>{if(state[k])state[k].snooze_until=until});
       ack.forEach(k=>{if(state[k]){state[k].acked=true;
         state[k].acked_at_utc=new Date().toISOString().replace(/\.\d+Z$/,'+00:00')}});
       const sbody={message:'Acknowledge / re-arm alerts via dashboard',
@@ -1932,14 +2089,14 @@ function renderMasthead(list){
   $('masthead').innerHTML=`<div class="mast">
     <div><span class="big">${inr(t.cur)}</span><span class="pl" style="color:${col}">${
       t.pl>=0?'+':''}${inr(t.pl)} &nbsp;${t.pct>=0?'+':''}${t.pct.toFixed(1)}%</span></div>
-    <div class="sub2">invested ${inr(t.inv)} \u00B7 ${list.length} holdings \u00B7
+    <div class="sub2">invested <span class="pmask">${inr(t.inv)}</span> \u00B7 ${list.length} holdings \u00B7
       ${accounts} account${accounts===1?'':'s'}${digestDate?' \u00B7 prices as of '+digestDate:''}</div>
     ${t.priced?`<div class="weight">
       <i class="up" style="width:${t.up/tot*100}%"></i>
       <i class="flat" style="width:${t.flat/tot*100}%"></i>
       <i class="dn" style="width:${t.dn/tot*100}%"></i></div>
-    <div class="wkey"><span style="color:var(--armed)">\u25CF in profit ${inr(t.up)}</span>
-      <span style="color:var(--crimson)">\u25CF at a loss ${inr(t.dn)}</span></div>`:
+    <div class="wkey"><span style="color:var(--armed)" class="pmask">\u25CF in profit ${inr(t.up)}</span>
+      <span style="color:var(--crimson)" class="pmask">\u25CF at a loss ${inr(t.dn)}</span></div>`:
       `<div class="sub2" style="color:var(--fired);margin-top:8px">No prices yet.
        Run the daily digest once to fill these in.</div>`}
   </div>`}
