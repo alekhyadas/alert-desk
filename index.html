@@ -620,6 +620,16 @@ function annualPct(pl_pct, held_days){
   if(y<=0)return null;
   return (Math.pow(1+pl_pct/100,1/y)-1)*100;
 }
+// Shared by Peaks and Held so the same cell renders identically in both,
+// rather than two copies drifting the way alertKey/trailPeak did.
+function benchCell(d){
+  if(d.alpha_pct===undefined||d.alpha_pct===null)return '<span class="sub">\u2014</span>';
+  const beat=d.alpha_pct>=0;
+  const c=beat?'var(--armed)':'var(--crimson)';
+  const approx=d.bench_approx?' <span class="sub" title="closest available proxy, not this fund\u2019s actual benchmark">~</span>':'';
+  return `<span style="color:${c}">${beat?'+':''}${d.alpha_pct.toFixed(1)}pt</span>${approx}
+    <div class="sub" style="font-size:10px">vs ${d.bench_name}</div>`;
+}
 function shortDate(s){
   if(!s)return '';
   const d=new Date(s);
@@ -645,7 +655,7 @@ function renderPeaks(){
     </div>`
   + '<div class="card" style="padding:0;overflow-x:auto"><table class="pk">'
   + '<tr><th>Stock</th><th>Now</th><th>Peak</th><th>From peak</th><th>Set</th>'
-  + '<th>Invested</th><th>Gain</th><th>Per year</th><th>Bought</th></tr>'
+  + '<th>Invested</th><th>Gain</th><th>Per year</th><th>Bought</th><th>vs index</th></tr>'
   + rows.map(d=>{
       const p=d.off_ath_pct;
       const c=p>=-2?'var(--armed)':(p<=-40?'var(--crimson)':'var(--fired)');
@@ -675,7 +685,8 @@ function renderPeaks(){
         <td class="num sub">${d.invested!==undefined?inr(d.invested):'\u2014'}</td>
         <td class="num" style="color:${gc}">${gain}</td>
         <td class="num">${annStr}</td>
-        <td class="sub num" style="font-size:11.5px">${bought}</td></tr>`}).join('')
+        <td class="sub num" style="font-size:11.5px">${bought}</td>
+        <td class="num" style="font-size:11.5px">${benchCell(d)}</td></tr>`}).join('')
   + '</table></div>'
   + '<div class="card sub" style="font-size:11.5px">Peaks marked \u00B7s have been '
   + 'adjusted for share splits, so they compare against today\u2019s share count. '
@@ -724,7 +735,7 @@ function renderHeld(){
       which is roughly what a fixed deposit pays with none of the risk.</span></div>`;
   L.innerHTML=head
   + '<div class="card" style="padding:0;overflow-x:auto"><table class="pk">'
-  + '<tr><th>Stock</th><th>Held</th><th>Return</th><th>Per year</th><th>Value</th></tr>'
+  + '<tr><th>Stock</th><th>Held</th><th>Return</th><th>Per year</th><th>Value</th><th>vs index</th></tr>'
   + rows.map(d=>{
       const dm=dead.find(x=>x.ticker===d.ticker);
       const ann=annualPct(d.pl_pct,d.held_days);
@@ -746,7 +757,8 @@ function renderHeld(){
         <td class="num" style="color:${beatsFD===null?'var(--muted)':(beatsFD?'var(--armed)':'var(--fired)')}">
           ${ann===null?'':(ann>=0?'+':'')+ann.toFixed(1)+'%'}
           ${beatsFD===false?' <span title="behind a fixed deposit">\u{1FAA8}</span>':''}</td>
-        <td class="num sub">${val}</td></tr>`}).join('')
+        <td class="num sub">${val}</td>
+        <td class="num" style="font-size:11.5px">${benchCell(d)}</td></tr>`}).join('')
   + '</table></div>'
   + '<div class="card sub" style="font-size:11.5px">Rows shaded red have been held '
   + 'over a year for under 8% total return. That is a statement about where your '
@@ -1277,10 +1289,42 @@ function computeBeta(rows){
   return {beta:cov/varI, days:pts.length};
 }
 
+// Beating or lagging each holding's own comparable index, ranked by
+// rupees rather than percent, so the answer is about money and not about
+// which stock happens to have the flashiest looking number.
+function alphaSummary(){
+  const rows=Object.values(digestBy).filter(d=>d.alpha_pct!==undefined&&d.alpha_pct!==null);
+  if(rows.length<3)return '';
+  const withRupees=rows.map(d=>({...d,alphaRs:(d.alpha_pct/100)*(d.invested||0)}));
+  const beating=withRupees.filter(d=>d.alpha_pct>0).sort((a,b)=>b.alphaRs-a.alphaRs);
+  const lagging=withRupees.filter(d=>d.alpha_pct<=0).sort((a,b)=>a.alphaRs-b.alphaRs);
+  const row=d=>`<div class="planline"><span>${d.ticker}
+      <span class="sub" style="font-size:10.5px">vs ${d.bench_name}${d.bench_approx?' ~':''}</span></span>
+    <b class="n" style="color:${d.alpha_pct>=0?'var(--armed)':'var(--crimson)'}">${
+      d.alpha_pct>=0?'+':''}${d.alpha_pct.toFixed(1)}pt</b></div>`;
+  return `<div class="card">
+    <div class="sub">Against each holding's own comparable index (Nifty 50,
+      Midcap 100 or Smallcap 100 by market cap; ETFs against what they
+      actually track). ${rows.length} of ${Object.keys(digestBy).length}
+      priced holdings have a real enough buy date to compute this.</div>
+    <div class="mgrid" style="margin-top:10px">
+      <div><div class="sub" style="margin-bottom:6px">Beating its index</div>
+        ${beating.slice(0,5).map(row).join('')||'<div class="sub">none</div>'}</div>
+      <div><div class="sub" style="margin-bottom:6px">Lagging its index</div>
+        ${lagging.slice(0,5).map(row).join('')||'<div class="sub">none</div>'}</div>
+    </div>
+    <div class="sub" style="margin-top:10px;font-size:11px">~ marks an
+      approximate proxy, where the fund's actual benchmark isn't one of the
+      four indices tracked here. A stock beating or lagging is a fact about
+      the price against the market, not advice.</div>
+  </div>`;
+}
+
 function renderMonth(){
   const L=$('list'), m=digestRaw&&digestRaw.month;
   const rawHist=(digestRaw&&digestRaw.history)||[];
   const beta=computeBeta(rawHist);
+  const alphaCard=alphaSummary();
   const betaCard=beta?`<div class="card">
       <div class="sub">Volatility relative to the Nifty 50, ${beta.days} trading
         days of history</div>
@@ -1300,7 +1344,7 @@ function renderMonth(){
     </div>`;
 
   if(!m){
-    L.innerHTML=xirrCard()+betaCard+`<div class="card"><div class="ttl">Not enough history yet</div>
+    L.innerHTML=xirrCard()+betaCard+alphaCard+`<div class="card"><div class="ttl">Not enough history yet</div>
       <p class="sub" style="margin-top:6px">This needs about a month of daily
       digest runs before it can compare anything. It fills itself in as
       portfolio_history.csv grows, and index levels are recorded from today
@@ -1314,7 +1358,7 @@ function renderMonth(){
       :beat===0?'behind every index'
       :`ahead of ${beat} of ${idx.length}`)
     : 'no index levels recorded yet';
-  L.innerHTML=xirrCard()+betaCard+`
+  L.innerHTML=xirrCard()+betaCard+alphaCard+`
   <div class="card">
     <div class="sub">${m.from} to ${m.to}</div>
     <div class="ttl" style="font-size:24px;margin-top:2px">
@@ -1935,7 +1979,8 @@ function staleCheck(iso){
 function exportCSV(){
   const cols=['ticker','exchange','account','broker','qty','avg_cost','buy_date',
               'lt_qty','price','invested','current','pl_abs','pl_pct',
-              'held_days','ath','off_ath_pct','sector','alert_type',
+              'held_days','ath','off_ath_pct','bench_name','bench_return_pct',
+              'alpha_pct','sector','alert_type',
               'alert_value','direction','note'];
   const seen=new Set(), out=[cols.join(',')];
   const esc=v=>{const s=(v===undefined||v===null)?'':String(v);
