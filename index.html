@@ -403,7 +403,12 @@
       <div><label>Account (whose)</label><input id="n-acct" placeholder="e.g. Alekhya, Rekha Dhan"></div>
       <div><label>Broker</label><input id="n-brk" placeholder="e.g. Groww, Zerodha"></div>
       <div><label>Avg cost (optional)</label><input id="n-cost" inputmode="decimal" placeholder="your buy price"></div>
-      <div><label>Quantity (optional)</label><input id="n-qty" inputmode="decimal" placeholder="shares held"></div>
+      <div><label>Quantity (optional)</label><input id="n-qty" inputmode="decimal" placeholder="shares held">
+        <div class="sub" style="margin-top:5px">or size by amount:
+          <input id="n-size" inputmode="decimal" placeholder="\u20B950,000"
+            oninput="sizeToQty()" style="width:110px;display:inline-block;
+            padding:8px;min-height:38px;font-size:12.5px">
+          <span id="n-size-out" class="sub"></span></div></div>
       <div><label>Buy date (optional, for tax)</label><input id="n-bdate" placeholder="YYYY-MM-DD"></div>
       <div style="grid-column:1/-1"><label>Why you set this / your exit plan (optional)</label>
         <input id="n-note" placeholder="e.g. trim half at breakeven, full exit if Q2 margins slip"></div>
@@ -604,6 +609,17 @@ function sortRows(list){
 
 // Dates in a dense table need to be short and must never wrap. "2025-10-21"
 // breaks across three lines in a narrow column and reads like a log entry.
+// Annualised return from a held_days/pl_pct pair. Was duplicated inline
+// twice already (the FD-benchmark filter and the Held table's Per year
+// column) before this extraction; a third inline copy for Peaks would have
+// been exactly the kind of drift that let alertKey and trailPeak disagree
+// for months without either side noticing.
+function annualPct(pl_pct, held_days){
+  if(!held_days||pl_pct===undefined||pl_pct===null)return null;
+  const y=held_days/365.25;
+  if(y<=0)return null;
+  return (Math.pow(1+pl_pct/100,1/y)-1)*100;
+}
 function shortDate(s){
   if(!s)return '';
   const d=new Date(s);
@@ -629,7 +645,7 @@ function renderPeaks(){
     </div>`
   + '<div class="card" style="padding:0;overflow-x:auto"><table class="pk">'
   + '<tr><th>Stock</th><th>Now</th><th>Peak</th><th>From peak</th><th>Set</th>'
-  + '<th>Invested</th><th>Gain</th><th>Bought</th></tr>'
+  + '<th>Invested</th><th>Gain</th><th>Per year</th><th>Bought</th></tr>'
   + rows.map(d=>{
       const p=d.off_ath_pct;
       const c=p>=-2?'var(--armed)':(p<=-40?'var(--crimson)':'var(--fired)');
@@ -648,6 +664,9 @@ function renderPeaks(){
         : (d.held_basis==='lt_qty'
             ? '<span class="sub" title="only known to be over a year, exact date missing">1y+</span>'
             : '<span class="sub">\u2014</span>');
+      const ann=annualPct(d.pl_pct,d.held_days);
+      const annStr=ann===null?'<span class="sub">\u2014</span>'
+        :`<span style="color:${ann>=0?'var(--armed)':'var(--crimson)'}">${ann>=0?'+':''}${ann.toFixed(1)}%</span>`;
       return `<tr${nm}><td><b>${d.ticker}</b>${sp}</td>
         <td class="num">${inr(d.price)}</td>
         <td class="num sub">${inr(d.ath)}</td>
@@ -655,6 +674,7 @@ function renderPeaks(){
         <td class="sub num" style="font-size:11.5px">${shortDate(d.ath_date)}</td>
         <td class="num sub">${d.invested!==undefined?inr(d.invested):'\u2014'}</td>
         <td class="num" style="color:${gc}">${gain}</td>
+        <td class="num">${annStr}</td>
         <td class="sub num" style="font-size:11.5px">${bought}</td></tr>`}).join('')
   + '</table></div>'
   + '<div class="card sub" style="font-size:11.5px">Peaks marked \u00B7s have been '
@@ -693,9 +713,9 @@ function renderHeld(){
   // as its own count, because "up 6%" over four years reads as a win and is
   // not one.
   const behind=rows.filter(d=>{
-    if(!d.held_days||d.held_days<548||d.pl_pct===undefined)return false;
-    const y=d.held_days/365.25;
-    return (Math.pow(1+d.pl_pct/100,1/y)-1)*100 < FD_RATE;});
+    if(!d.held_days||d.held_days<548)return false;
+    const a=annualPct(d.pl_pct,d.held_days);
+    return a!==null && a<FD_RATE;});
   const behindVal=behind.reduce((s,d)=>s+(d.price*d.qty||0),0);
   if(behind.length)
     head+=`<div class="card" style="padding:10px 14px">
@@ -707,9 +727,7 @@ function renderHeld(){
   + '<tr><th>Stock</th><th>Held</th><th>Return</th><th>Per year</th><th>Value</th></tr>'
   + rows.map(d=>{
       const dm=dead.find(x=>x.ticker===d.ticker);
-      const yrs=d.held_days?d.held_days/365.25:null;
-      const ann=(yrs&&yrs>0&&d.pl_pct!==undefined)
-        ? (Math.pow(1+d.pl_pct/100,1/yrs)-1)*100 : null;
+      const ann=annualPct(d.pl_pct,d.held_days);
       // A stock returning 4% a year while an FD pays 7% is not "up a bit",
       // it is behind the risk-free option while carrying all the risk.
       const beatsFD=ann===null?null:ann>=FD_RATE;
@@ -1365,7 +1383,11 @@ function renderNews(){
 // terminal, and typing into a field must never trigger them.
 document.addEventListener('keydown',e=>{
   const inField=/^(INPUT|TEXTAREA|SELECT)$/.test((e.target.tagName||''));
-  if(e.key==='/'&&!inField){e.preventDefault();$('q').focus();$('q').select();return}
+  // Cmd+K/Ctrl+K alongside plain '/', since both are standard muscle memory
+  // depending on which terminal a person came from most recently.
+  const isCmdK=(e.metaKey||e.ctrlKey)&&e.key.toLowerCase()==='k';
+  if((e.key==='/'||isCmdK)&&(isCmdK||!inField)){
+    e.preventDefault();$('q').focus();$('q').select();return}
   if(e.key==='Escape'){
     if(bulkSel.size){bulkNone();return}
     if($('q').value){$('q').value='';render();$('q').blur()}}
@@ -1450,6 +1472,43 @@ function renderAudit(){
     this alert set up" can't be answered from here.</div>`;
 }
 
+
+// --- Breakouts ---------------------------------------------------------
+// The Peaks tab already sorts everything by distance from its own high,
+// but sorting is not the same as a filter: finding "what's within 3% of a
+// new high" still means scanning past 100 rows sorted the wrong way for
+// this particular question. This isolates them.
+const BREAKOUT_BAND = 3.0;
+
+function renderBreakouts(){
+  const L=$('list');
+  const rows=Object.values(digestBy)
+    .filter(d=>d.ath&&d.price&&d.off_ath_pct!==undefined&&d.off_ath_pct>=-BREAKOUT_BAND)
+    .sort((a,b)=>b.off_ath_pct-a.off_ath_pct);
+  if(!rows.length){
+    L.innerHTML=`<div class="card"><div class="ttl">Nothing within ${BREAKOUT_BAND}% of its peak today</div>
+      <p class="sub" style="margin-top:6px">This watches for holdings trading
+      close to their own split-adjusted high, which is where a position is
+      most likely to actually set a new one.</p></div>`;return}
+  L.innerHTML=`<div class="card" style="padding:10px 14px">
+      <b>${rows.length}</b> <span class="sub">within ${BREAKOUT_BAND}% of their own high</span>
+    </div>`
+  + '<div class="card" style="padding:0;overflow-x:auto"><table class="pk">'
+  + '<tr><th>Stock</th><th>Now</th><th>Peak</th><th>From peak</th><th>Set</th></tr>'
+  + rows.map(d=>{
+      const p=d.off_ath_pct;
+      const atPeak=p>=-0.05;
+      return `<tr><td><b>${d.ticker}</b>${atPeak?' <span style="color:var(--armed)">\u2605</span>':''}</td>
+        <td class="num">${inr(d.price)}</td>
+        <td class="num sub">${inr(d.ath)}</td>
+        <td class="num" style="color:var(--armed)">${p>=0?'+':''}${p.toFixed(1)}%</td>
+        <td class="sub num" style="font-size:11.5px">${shortDate(d.ath_date)}</td></tr>`}).join('')
+  + '</table></div>'
+  + `<div class="card sub" style="font-size:11.5px">\u2605 marks a position
+    AT its own all-time high right now. A new high is a fact about the
+    price, not a signal to act on.</div>`;
+}
+
 function setTab(t){tab=t;render()}
 
 function accountsOf(list){
@@ -1481,7 +1540,8 @@ function render(){
                ['plan','\u{1F9EE} Sell planner'],
                ['month','\u{1F4C6} Month'],
                ['news','\u{1F4F0} News'],
-              ['audit','\u{1F550} Audit']];
+              ['audit','\u{1F550} Audit'],
+              ['breakouts','\u{1F680} Breakouts']];
   $('tabs').innerHTML=views.map(([k,lab])=>{
       const on=(k==='alerts')?isList:(tab===k);
       return `<div class="vtab${on?' on':''}" onclick="setTab('${k}')">${lab}</div>`
@@ -1513,7 +1573,7 @@ function render(){
 
   const analysis={peaks:renderPeaks,held:renderHeld,costs:renderCosts,
                   plan:renderPlan,month:renderMonth,news:renderNews,
-                  audit:renderAudit};
+                  audit:renderAudit,breakouts:renderBreakouts};
   $('sortbar').style.display=analysis[tab]?'none':'';
   if(analysis[tab]){analysis[tab]();$('savebar').classList.toggle('show',dirty);
     bulkDock();return}
@@ -1734,9 +1794,26 @@ function familyHold(ticker){
   return out;
 }
 
-function overlapNote(){
-  const box=$('overlap'); if(!box)return;
+
+// Position sizing. Type an amount, get a share count at today's price. It
+// only fills n-qty as a suggestion the person can still edit; it never
+// submits on its own, and it does nothing without a resolvable price.
+function sizeToQty(){
+  const amt=parseFloat($('n-size').value);
   const tk=($('n-tk').value||'').trim().toUpperCase();
+  const out=$('n-size-out');
+  if(!amt||!tk){out.textContent='';return}
+  const d=digestBy[tk];
+  if(!d||!d.price){out.textContent='no price known for '+tk+' yet';return}
+  const qty=Math.floor(amt/d.price);
+  if(qty<1){out.textContent=`${inr(amt)} buys 0 shares at ${inr(d.price)}`;return}
+  $('n-qty').value=qty;
+  out.textContent=`\u2192 ${qty} shares at ${inr(d.price)} (${inr(qty*d.price)} used, ${inr(amt-qty*d.price)} left over)`;
+}
+
+function overlapNote(tkOverride){
+  const box=$('overlap'); if(!box)return;
+  const tk=(tkOverride||$('n-tk').value||'').trim().toUpperCase();
   if(!tk){box.innerHTML='';return}
   const held=familyHold(tk);
   const who=Object.keys(held);
@@ -1971,8 +2048,9 @@ const STOPWORDS=new Set(['alert','alerts','me','when','if','becomes','become','i
 function smartPreview(){
   const box=$('smartchips'); if(!box)return;
   const txt=($('smart-in').value||'').trim();
-  if(!txt){box.innerHTML='';return}
+  if(!txt){box.innerHTML='';$('overlap').innerHTML='';return}
   const p=parseSmart(txt);
+  if(!p.err)overlapNote(p.ticker);
   if(p.err){box.innerHTML=`<span class="pchip bad">${p.err}</span>`;return}
   const t=p.alert_type;
   const target=t==='percent'
@@ -2041,6 +2119,9 @@ function smartParse(){
   const {ticker,exchange,alert_type:type,direction,
          alert_value:value,reference_price:reference}=p;
   $('n-tk').value=ticker.toUpperCase();
+  overlapNote();  // programmatic .value= never fires 'input', so this has
+                  // to be called explicitly or the warning never appears
+                  // for anything added via Smart Add.
   $('n-ex').value=exchange;
   $('n-ty').value=type; refToggle();
   $('n-di').value=direction;
@@ -2204,6 +2285,49 @@ function totals(list){
     else cur+=st.invested});
   return {inv,cur,pl:cur-inv,pct:inv?((cur/inv-1)*100):0,priced,up,dn,flat}}
 
+// Sector concentration, right next to the profit/loss ratio bar as the
+// obvious neighbour to it: one shows health by direction, this shows
+// health by exposure. Family-wide, not per-account, because a sector risk
+// spread across seven accounts is invisible in any single one of them.
+function sectorConcentration(list){
+  const sect={};
+  let total=0;
+  list.forEach(a=>{
+    const st=rowStats(a);
+    if(st.value===null||!a.sector)return;
+    const k=a.sector.trim(); if(!k)return;
+    sect[k]=(sect[k]||0)+st.value;
+    total+=st.value;
+  });
+  const entries=Object.entries(sect).sort((a,b)=>b[1]-a[1]);
+  return {entries,total};
+}
+const SECTOR_HUES=[352,150,42,265,190,20,300,90];
+function sectorColour(i){return `hsl(${SECTOR_HUES[i%SECTOR_HUES.length]} 55% 52%)`}
+
+// Kept as its own function, not inlined into the masthead's template
+// literal, because a template string containing further backtick strings
+// cannot be nested directly inside another un-escaped one — that exact
+// mistake broke this the first time it was written.
+function sectorBarHTML(list){
+  const sc=sectorConcentration(list);
+  if(sc.entries.length<2||!sc.total)return '';
+  const top=sc.entries[0];
+  const topShare=top[1]/sc.total*100;
+  const bar=sc.entries.map(([k,v],i)=>
+    `<i style="width:${v/sc.total*100}%;background:${sectorColour(i)}"></i>`).join('');
+  const legend=sc.entries.slice(0,5).map(([k,v],i)=>
+    `<span class="sub" style="margin-right:10px"><i style="display:inline-block;
+      width:8px;height:8px;border-radius:2px;background:${sectorColour(i)};
+      margin-right:4px;vertical-align:middle"></i>${k}
+      ${(v/sc.total*100).toFixed(0)}%</span>`).join('');
+  return `<div class="sub" style="margin-top:10px;font-size:11px;
+      letter-spacing:.04em">SECTOR CONCENTRATION${
+      topShare>=35?` \u00B7 <span style="color:var(--fired)">${topShare.toFixed(0)}% in ${top[0]}</span>`:''}</div>
+    <div class="weight" style="margin-top:4px">${bar}</div>
+    <div style="margin-top:5px">${legend}</div>`;
+}
+
 function renderMasthead(list){
   const t=totals(list);
   if(!t.inv){$('masthead').innerHTML='';return}
@@ -2220,7 +2344,8 @@ function renderMasthead(list){
       <i class="flat" style="width:${t.flat/tot*100}%"></i>
       <i class="dn" style="width:${t.dn/tot*100}%"></i></div>
     <div class="wkey"><span style="color:var(--armed)" class="pmask">\u25CF in profit ${inr(t.up)}</span>
-      <span style="color:var(--crimson)" class="pmask">\u25CF at a loss ${inr(t.dn)}</span></div>`:
+      <span style="color:var(--crimson)" class="pmask">\u25CF at a loss ${inr(t.dn)}</span></div>
+    ${sectorBarHTML(list)}`:
       `<div class="sub2" style="color:var(--fired);margin-top:8px">No prices yet.
        Run the daily digest once to fill these in.</div>`}
   </div>`}
