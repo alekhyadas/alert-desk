@@ -254,7 +254,19 @@
   /* Fixed icon column so the text never wraps under the marker and the
      eye runs straight down the page for scanning. */
   .chghdr{font-size:10.5px;font-weight:700;letter-spacing:.06em;
-    padding:6px 0 4px}
+    padding:6px 0 4px;position:sticky;top:0;background:var(--panel);
+    z-index:1}
+  /* Capped rather than left to grow with the event count, which on a busy
+     day could push a thirteen-row list past the whole viewport and, on
+     desktop, stretch the sticky rail taller than the screen it is meant to
+     stay pinned within. A visible, styled scrollbar signals there is more
+     to see instead of the list just quietly cutting off. */
+  .chgscroll{margin-top:8px;max-height:60vh;overflow-y:auto;padding-right:4px;
+    scrollbar-width:thin;scrollbar-color:var(--paused) transparent}
+  .chgscroll::-webkit-scrollbar{width:7px}
+  .chgscroll::-webkit-scrollbar-track{background:transparent}
+  .chgscroll::-webkit-scrollbar-thumb{background:var(--paused);border-radius:4px}
+  .chgscroll::-webkit-scrollbar-thumb:hover{background:var(--muted)}
   .chg2{display:grid;grid-template-columns:56px 1fr;gap:10px;
     align-items:start;padding:8px 0;border-bottom:1px solid var(--line)}
   .chg2:last-child{border-bottom:none}
@@ -2443,9 +2455,9 @@ function renderPerf(){
 // leads with a bold, coloured badge; the full sentence stays underneath
 // for whoever wants the detail.
 const CHG_UP=new Set(['ath','nearath','breakeven','recovering']);
-const CHG_DOWN=new Set(['near','newlow']);
+const CHG_DOWN=new Set(['near','newlow','dropped']);
 const CHG_ICON={breakeven:'\u2705',near:'\uD83C\uDFAF',recovering:'\u2197\uFE0F',
-               newlow:'\uD83D\uDD3B',ath:'\uD83D\uDE80',nearath:'\uD83D\uDC40'};
+               newlow:'\uD83D\uDD3B',dropped:'\uD83D\uDD3A',ath:'\uD83D\uDE80',nearath:'\uD83D\uDC40'};
 
 function chgRow(x){
   const up=CHG_UP.has(x.kind);
@@ -2471,7 +2483,7 @@ function renderAttention(){
     .sort((a,b)=>b.gap-a.gap);
   $('attention').innerHTML=`<div class="card">
     <details class="fold" open><summary>WHAT CHANGED \u00B7 ${ev.length}</summary>
-    <div style="margin-top:8px">
+    <div class="chgscroll">
     ${up.length?`<div class="chghdr" style="color:var(--armed)">
         \u25B2 TOWARD A HIGH \u00B7 ${up.length}</div>${up.map(chgRow).join('')}`:''}
     ${down.length?`<div class="chghdr" style="color:var(--crimson);${up.length?'margin-top:12px':''}">
