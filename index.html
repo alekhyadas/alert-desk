@@ -253,10 +253,14 @@
   input[type=search]::-webkit-search-cancel-button{display:none}
   /* Fixed icon column so the text never wraps under the marker and the
      eye runs straight down the page for scanning. */
-  .chg{display:grid;grid-template-columns:22px 1fr;gap:4px 10px;
-    align-items:start;padding:7px 0;border-bottom:1px solid var(--line)}
-  .chg:last-child{border-bottom:none}
-  .chg .ic{font-size:14px;line-height:1.5;text-align:center}
+  .chghdr{font-size:10.5px;font-weight:700;letter-spacing:.06em;
+    padding:6px 0 4px}
+  .chg2{display:grid;grid-template-columns:56px 1fr;gap:10px;
+    align-items:start;padding:8px 0;border-bottom:1px solid var(--line)}
+  .chg2:last-child{border-bottom:none}
+  .chgbadge{font-size:12px;font-weight:700;border:1px solid;border-radius:7px;
+    padding:3px 0;text-align:center;white-space:nowrap}
+  .chg2 .ic{font-size:13px;margin-right:4px}
   .pchip{display:inline-block;font-size:11.5px;border:1px solid var(--line);
     background:var(--panel2);border-radius:20px;padding:3px 10px;margin:7px 6px 0 0}
   .pchip.bad{color:var(--fired);border-color:var(--fired)}
@@ -2433,20 +2437,47 @@ function renderPerf(){
       added or withdrawn rather than performance.</div>`:''}
   </div>`}
 
+// Split by direction, since "what changed" was one undifferentiated list
+// with the percentage buried inside a sentence. A number you have to read
+// a whole clause to find is a number nobody scans quickly. Each row now
+// leads with a bold, coloured badge; the full sentence stays underneath
+// for whoever wants the detail.
+const CHG_UP=new Set(['ath','nearath','breakeven','recovering']);
+const CHG_DOWN=new Set(['near','newlow']);
+const CHG_ICON={breakeven:'\u2705',near:'\uD83C\uDFAF',recovering:'\u2197\uFE0F',
+               newlow:'\uD83D\uDD3B',ath:'\uD83D\uDE80',nearath:'\uD83D\uDC40'};
+
+function chgRow(x){
+  const up=CHG_UP.has(x.kind);
+  const c=up?'var(--armed)':'var(--crimson)';
+  const arrow=up?'\u25B2':'\u25BC';
+  return `<div class="chg2">
+    <span class="chgbadge" style="color:${c};border-color:${c}">${arrow} ${x.gap.toFixed(1)}%</span>
+    <div style="min-width:0">
+      <div><span class="ic">${CHG_ICON[x.kind]||'\u2022'}</span>
+        <b class="jump" onclick="focusCard('${x.ticker}')"
+          title="Jump to this holding">${x.ticker}</b></div>
+      <div class="sub" style="margin-top:2px">${x.text}</div>
+    </div>
+  </div>`;
+}
+
 function renderAttention(){
   const ev=(digestRaw&&digestRaw.events)||[];
   if(!ev.length){$('attention').innerHTML='';return}
-  const dot={breakeven:'\u2705',near:'\uD83C\uDFAF',recovering:'\u2197\uFE0F',
-             newlow:'\uD83D\uDD3B',ath:'\uD83D\uDE80',nearath:'\uD83D\uDC40'};
+  const up=ev.filter(x=>CHG_UP.has(x.kind)).sort((a,b)=>b.gap-a.gap);
+  const down=ev.filter(x=>CHG_DOWN.has(x.kind)).sort((a,b)=>b.gap-a.gap);
+  const rest=ev.filter(x=>!CHG_UP.has(x.kind)&&!CHG_DOWN.has(x.kind))
+    .sort((a,b)=>b.gap-a.gap);
   $('attention').innerHTML=`<div class="card">
     <details class="fold" open><summary>WHAT CHANGED \u00B7 ${ev.length}</summary>
-    <div style="margin-top:8px">${ev.map(x=>`<div class="chg">
-      <span class="ic">${dot[x.kind]||'\u2022'}</span>
-      <b class="jump" onclick="focusCard('${x.ticker}')"
-        title="Jump to this holding">${x.ticker}</b>
-      <span></span>
-      <span class="sub">${x.text}</span>
-    </div>`).join('')}</div></details></div>`}
+    <div style="margin-top:8px">
+    ${up.length?`<div class="chghdr" style="color:var(--armed)">
+        \u25B2 TOWARD A HIGH \u00B7 ${up.length}</div>${up.map(chgRow).join('')}`:''}
+    ${down.length?`<div class="chghdr" style="color:var(--crimson);${up.length?'margin-top:12px':''}">
+        \u25BC TOWARD COST OR A LOW \u00B7 ${down.length}</div>${down.map(chgRow).join('')}`:''}
+    ${rest.length?rest.map(chgRow).join(''):''}
+    </div></details></div>`}
 
 function renderTax(){
   const t=digestRaw&&digestRaw.tax;
