@@ -84,6 +84,11 @@
   .tk{font-family:'Bricolage Grotesque',sans-serif;font-weight:700;font-size:21px;
     letter-spacing:-.015em;line-height:1.1}
   .card.alert{padding:20px}
+  .condlist{margin-top:2px}
+  .condrow{padding:14px 0 4px;border-top:1px solid var(--line)}
+  .condrow:first-child{border-top:none;padding-top:10px}
+  .condrow.dirty{box-shadow:inset 3px 0 0 var(--crimson-deep)}
+  .condrow .top{gap:8px}
   .card.alert .top{align-items:center;gap:8px;margin-bottom:2px}
   /* A note is the user's own voice, so it is quoted with a rule rather than
      left to run the full width as another line of system text. */
@@ -320,6 +325,19 @@
   #privbtn svg .lid{transition:transform .15s ease;transform-origin:8px 8px}
   body.privacy #privbtn svg .lid{transform:scaleY(0.35)}
   body.privacy #privbtn{color:var(--brand)}
+  /* zoom, not transform:scale, because zoom affects real layout size (tap
+     targets grow, not just what is drawn) and because it leaves sticky and
+     fixed positioning (the tab bar, the sticky desktop rail, the save bar)
+     working correctly, which transform does not do without extra
+     compensation. Baseline across Chrome/Safari/Edge and Firefox 126+
+     (May 2024), so safe by any device likely in use now. */
+  body.comfort{zoom:1.22}
+  body.comfort #comfortbtn{color:var(--brand);border-color:var(--brand)}
+  /* Shown only in Comfort Mode. The dense number-first view stays exactly
+     as it was for anyone who has not asked for anything else; a plain
+     sentence is additive, not a replacement. */
+  .comfort-only{display:none}
+  body.comfort .comfort-only{display:block}
   .err{color:#F09A9A}
   details summary{cursor:pointer;color:var(--muted);font-size:13px}
   a{color:var(--crimson)}
@@ -334,8 +352,11 @@
 <body>
 <header>
   <div class="brand">Alert <em>Desk</em></div>
+  <button id="comfortbtn" class="ib" title="Larger text and buttons"
+    aria-label="Toggle comfort mode" onclick="toggleComfort()"
+    style="margin-left:auto;font-size:15px;font-weight:700">Aa</button>
   <button id="privbtn" class="ib" title="Hide amounts" aria-label="Toggle privacy"
-    onclick="togglePrivacy()" style="margin-left:auto"></button>
+    onclick="togglePrivacy()"></button>
   <div id="runline">Not connected</div>
 </header>
 
@@ -708,6 +729,11 @@ function renderPeaks(){
   + 'adjusted for share splits, so they compare against today\u2019s share count. '
   + 'Bought shows 1y+ where only the broker\u2019s long-term flag is known, not '
   + 'the exact date. Hover a name for the full company name where Yahoo has it. '
+  + 'Per year turns the total gain into a yearly rate, the way a fixed deposit '
+  + 'quotes interest, so a five-year holding and a five-month one can be compared '
+  + 'fairly. Vs index compares that same holding to the closest matching market '
+  + 'index (large, mid or small cap) over the exact time you have held it; pt '
+  + 'means percentage points ahead or behind, not percent. '
   + 'A peak is a fact about the price, not a reason to sell.</div>';
 }
 
@@ -778,7 +804,11 @@ function renderHeld(){
   + '</table></div>'
   + '<div class="card sub" style="font-size:11.5px">Rows shaded red have been held '
   + 'over a year for under 8% total return. That is a statement about where your '
-  + 'capital has been sitting, not advice to sell it.</div>';
+  + 'capital has been sitting, not advice to sell it. Per year turns the total '
+  + 'gain into a yearly rate so different holding periods can be compared fairly, '
+  + 'the way a bank quotes interest. Vs index compares the same holding to the '
+  + 'closest matching market index over the time you actually held it; pt means '
+  + 'percentage points, not percent.</div>';
 }
 
 
@@ -1477,6 +1507,22 @@ function togglePrivacy(){
   localStorage.setItem(PRIVACY_KEY, privacyOn()?'0':'1');
   applyPrivacy();
 }
+
+// Comfort Mode: larger text and touch targets in one tap, for anyone who
+// wants them, without changing anything for anyone who does not. Defaults
+// OFF, unlike Privacy's default-hidden: that one protects against a
+// surprise (someone seeing your net worth), this one is a preference, and
+// the dense view is the one already tuned across this whole build.
+const COMFORT_KEY='ad_comfort';
+function comfortOn(){return localStorage.getItem(COMFORT_KEY)==='1'}
+function applyComfort(){
+  document.body.classList.toggle('comfort',comfortOn());
+}
+function toggleComfort(){
+  localStorage.setItem(COMFORT_KEY, comfortOn()?'0':'1');
+  applyComfort();
+}
+applyComfort();
 document.addEventListener('click',e=>{
   if(!privacyOn())return;
   const el=e.target.closest('.mast .big,.mast .pl,.pmask');
@@ -1686,7 +1732,18 @@ function render(){
     bb.innerHTML=bulkBar(ar.map(x=>x.i));
     L.appendChild(bb.firstElementChild);
     const grid=document.createElement('div'); grid.className='alertgrid';
-    ar.forEach(({a,i})=>grid.appendChild(alertCard(a,i)));
+    // Group by ticker+account+broker, preserving the CURRENT sort's order:
+    // a group's position in the grid is wherever its first-seen member
+    // would have sorted to, so switching sort mode still reorders groups
+    // sensibly rather than freezing them in whatever order they first
+    // appeared in the CSV.
+    const groups=new Map();
+    ar.forEach(m=>{
+      const k=groupKey(m.a);
+      if(!groups.has(k))groups.set(k,[]);
+      groups.get(k).push(m);
+    });
+    groups.forEach(members=>grid.appendChild(alertGroupCard(members)));
     L.appendChild(grid);
   }
 
@@ -2020,33 +2077,31 @@ function exportCSV(){
   toast(out.length-1+' rows exported');
 }
 
-function alertCard(a,i){
+// A holding with several alerts (a trailing stop, a price ceiling, a floor)
+// used to render as several full cards, each repeating the same ticker,
+// account and cost line. Three SKYWAYS cards in a row read as three
+// different things when they were one position with three watch
+// conditions. Shared facts now render once; each condition is a compact
+// row underneath, still wired to its own alert index so pause/edit/delete/
+// snooze/Kite all act on that specific row, exactly as before.
+
+function groupKey(a){return [a.ticker,a.exchange,a.account||'',a.broker||''].join('|')}
+
+// One condition's own line: the trigger, its trailing-stop bar if it has
+// one, fired/rearm/snooze/ack status, the person's own note, and that
+// row's action icons. Everything here used to live inside one full card;
+// now it is the repeatable part, the shared part above it is not.
+function alertRow(a,i){
   const f=firedEntry(a), rearming=f&&rearm.has(f.key);
   const snoozedTo=snoozeActive(a);
   const status=!a.enabled?'paused':(snoozedTo?'paused':(f&&!rearming?'fired':'armed'));
-  const gaps=incomplete(a);
-  const card=document.createElement('div');
-  card.className='card alert'+(dirty?' dirty':'')+(gaps?' incomplete':'')
-    +(isPerk(a)?' perk':'');
-  card.id='card-'+a.ticker;
   const t=trigger(a);
-  card.innerHTML=`
-    <div class="top">
+  return `<div class="condrow${dirty?' dirty':''}">
+    <div class="top" style="margin-bottom:0">
       <span class="pick" onclick="bulkToggle(${i},event)"
         title="Select for a bulk action">${bulkSel.has(i)?'\u2611':'\u2610'}</span>
-      <span class="tk">${a.ticker}</span><span class="ex">${a.exchange}</span>
-      <a class="chart" href="${chartUrl(a)}" target="_blank" rel="noopener"
-        onclick="event.stopPropagation()" title="Open the live chart">${ICO.chart}</a>
-      ${isPerk(a)?`<span class="pill perkpill" title="Held for the annual report or AGM, not as a position">\u{1F4DA} perk${perkRTA(a)?' \u00B7 '+perkRTA(a):''}</span>`:''}
-      ${earningsPill(a)}
       <span class="chip ${status}">${status.toUpperCase()}</span>
     </div>
-    ${gaps?`<div class="warn">\u26A0 Incomplete: no ${gaps.join(', ')}. This row
-      is missing from every total and every tax figure.</div>`:''}
-    ${(a.account||a.broker)?`<div class="sub" style="margin-top:4px">
-      <span class="adot" style="background:${acctColour(a.account)}"></span>
-      <span style="color:var(--paper)">${[a.account,a.broker].filter(Boolean).join(' / ')}</span></div>`:''}
-    ${a.avg_cost?`<div class="sub" style="margin-top:2px">Cost ${cur(a)}${fmt(parseFloat(a.avg_cost))}${a.qty?` \u00B7 ${a.qty} shares`:''}${(a.alert_type==='percent'&&!a.reference_price)?' \u00B7 target measured from cost':''}</div>`:''}
     <div class="trigger">${
       a.alert_type==='percent'
       ?`${fmt(parseFloat(a.reference_price||a.avg_cost))} ${a.direction==='above'?'+':'\u2212'}${a.alert_value}% \u2192 <b>${a.direction} ${cur(a)}${fmt(t)}</b>`
@@ -2054,7 +2109,7 @@ function alertCard(a,i){
       ?(t?`trails ${a.alert_value}% under its peak \u2192 <b>sell alert at ${cur(a)}${fmt(t)}</b>`
           +`<span class="sub"> (peak ${cur(a)}${fmt(trailPeak(a))})</span>`
         :`trails <b>${a.alert_value}%</b> under its highest price`
-          +`<span class="sub"> \u00B7 peak set on the next price check</span>`)
+          +`<span class="sub"> \u00B7 peak not recorded yet, appears after the next price check</span>`)
       :`<b>${a.direction} ${cur(a)}${fmt(t)}</b>`}</div>
     ${a.alert_type==='trail'?trailBar(a):''}
     ${f&&!rearming?`<div class="sub">Fired ${new Date(f.fired_at_utc).toLocaleString('en-IN',{dateStyle:'medium',timeStyle:'short'})} at ${cur(a)}${fmt(f.fired_price)}</div>`:''}
@@ -2073,8 +2128,39 @@ function alertCard(a,i){
       ${(f&&!rearming&&kiteSide(a)&&a.exchange!=='US')?`<button class="exec"
         onclick="kiteExec(${i})" title="Opens Kite with the order pre-filled. You confirm there.">
         ${kiteSide(a)==='SELL'?'Sell':'Buy'} ${Math.round(parseFloat(a.qty)||1)} in Kite</button>`:''}
-    </div>`;
-  return card}
+    </div>
+  </div>`;
+}
+
+// The shared header and position facts, once, plus every condition row for
+// this holding. members is [{a,i}, ...] all sharing one ticker/account/
+// broker; for a holding with a single alert this looks the same as the old
+// per-alert card did, so nothing regresses for the common case.
+function alertGroupCard(members){
+  const a0=members[0].a;
+  const gaps=members.map(m=>incomplete(m.a)).find(Boolean);
+  const anyPerk=members.some(m=>isPerk(m.a));
+  const card=document.createElement('div');
+  card.className='card alert'+(gaps?' incomplete':'')+(anyPerk?' perk':'');
+  card.id='card-'+a0.ticker;
+  card.innerHTML=`
+    <div class="top">
+      <span class="tk">${a0.ticker}</span><span class="ex">${a0.exchange}</span>
+      <a class="chart" href="${chartUrl(a0)}" target="_blank" rel="noopener"
+        onclick="event.stopPropagation()" title="Open the live chart">${ICO.chart}</a>
+      ${anyPerk?`<span class="pill perkpill" title="Held for the annual report or AGM, not as a position">\u{1F4DA} perk${perkRTA(a0)?' \u00B7 '+perkRTA(a0):''}</span>`:''}
+      ${earningsPill(a0)}
+      ${members.length>1?`<span class="pill" style="margin-left:auto">${members.length} alerts</span>`:''}
+    </div>
+    ${gaps?`<div class="warn">\u26A0 Incomplete: no ${gaps.join(', ')}. This row
+      is missing from every total and every tax figure.</div>`:''}
+    ${(a0.account||a0.broker)?`<div class="sub" style="margin-top:4px">
+      <span class="adot" style="background:${acctColour(a0.account)}"></span>
+      <span style="color:var(--paper)">${[a0.account,a0.broker].filter(Boolean).join(' / ')}</span></div>`:''}
+    ${a0.avg_cost?`<div class="sub" style="margin-top:2px">Cost ${cur(a0)}${fmt(parseFloat(a0.avg_cost))}${a0.qty?` \u00B7 ${a0.qty} shares`:''}</div>`:''}
+    <div class="condlist">${members.map(({a,i})=>alertRow(a,i)).join('')}</div>`;
+  return card;
+}
 
 function markDirty(){dirty=true;render()}
 function togglePause(i){alerts[i].enabled=!alerts[i].enabled;markDirty()}
@@ -2400,6 +2486,14 @@ function renderMasthead(list){
       t.pl>=0?'+':''}${inr(t.pl)} &nbsp;${t.pct>=0?'+':''}${t.pct.toFixed(1)}%</span></div>
     <div class="sub2">invested <span class="pmask">${inr(t.inv)}</span> \u00B7 ${list.length} holdings \u00B7
       ${accounts} account${accounts===1?'':'s'}${digestDate?' \u00B7 prices as of '+digestDate:''}</div>
+    <div class="comfort-only sub2" style="margin-top:8px;line-height:1.5">
+      In plain terms: ${accounts>1?'the family has':'you have'} put in
+      <span class="pmask">${inr(t.inv)}</span> across ${list.length} holdings.
+      ${t.priced?`It is worth <span class="pmask">${inr(t.cur)}</span> today,
+      ${t.pl>=0?'up':'down'} <span class="pmask">${inr(Math.abs(t.pl))}</span>
+      overall, about ${Math.abs(t.pct).toFixed(1)}%.`
+      :'Prices have not come in yet for this to be worth much more than that.'}
+    </div>
     ${t.priced?`<div class="weight">
       <i class="up" style="width:${t.up/tot*100}%"></i>
       <i class="flat" style="width:${t.flat/tot*100}%"></i>
