@@ -1686,7 +1686,8 @@ function render(){
                ['month','\u{1F4C6} Month'],
                ['news','\u{1F4F0} News'],
               ['audit','\u{1F550} Audit'],
-              ['breakouts','\u{1F680} Breakouts']];
+              ['breakouts','\u{1F680} Breakouts'],
+              ['calls','\u{1F4E3} Calls']];
   $('tabs').innerHTML=views.map(([k,lab])=>{
       const on=(k==='alerts')?isList:(tab===k);
       return `<div class="vtab${on?' on':''}" onclick="setTab('${k}')">${lab}</div>`
@@ -1718,7 +1719,7 @@ function render(){
 
   const analysis={peaks:renderPeaks,held:renderHeld,costs:renderCosts,
                   plan:renderPlan,month:renderMonth,news:renderNews,
-                  audit:renderAudit,breakouts:renderBreakouts};
+                  audit:renderAudit,breakouts:renderBreakouts,calls:renderCalls};
   $('sortbar').style.display=analysis[tab]?'none':'';
   if(analysis[tab]){analysis[tab]();$('savebar').classList.toggle('show',dirty);
     bulkDock();return}
@@ -1810,8 +1811,9 @@ function render(){
           if(isFinite(q))valHtml=`<span class="val">\u20B9${(px*q).toLocaleString('en-IN',{maximumFractionDigits:0})}</span>`;
         }
       }
+      const wc=callOf(a.ticker);
       html+=`<div class="wrow">
-        <span class="tkn">${a.ticker}</span>
+        <span class="tkn">${a.ticker}${wc?` <span title="${wc.influencer} — target ${fmt(parseFloat(wc.target))}, stop-loss ${fmt(parseFloat(wc.stop_loss))}">\u{1F4E3}</span>`:''}</span>
         ${(sortKey==='account'&&!combine)?'':`<span class="acct">${acct}</span>`}
         <span class="qty">${isFinite(q)?q+' sh':''}</span>
         ${pxHtml}
@@ -2189,6 +2191,7 @@ function alertGroupCard(members){
         onclick="event.stopPropagation()" title="Open the live chart">${ICO.chart}</a>
       ${anyPerk?`<span class="pill perkpill" title="Held for the annual report or AGM, not as a position">\u{1F4DA} perk${perkRTA(a0)?' \u00B7 '+perkRTA(a0):''}</span>`:''}
       ${earningsPill(a0)}
+      ${callPill(a0)}
       ${members.length>1?`<span class="pill" style="margin-left:auto">${members.length} alerts</span>`:''}
     </div>
     ${gaps?`<div class="warn">\u26A0 Incomplete: no ${gaps.join(', ')}. This row
@@ -2363,8 +2366,13 @@ async function loadAll(){
   }catch(e){renderDigest(null)}
   try{
     const rf=await gh(`/repos/${own}/${rep}/contents/research.json`);
-    researchBy=rf?(JSON.parse(b64dec(rf.content)).stocks||{}):{}
-  }catch(e){researchBy={}}
+    const rj=rf?JSON.parse(b64dec(rf.content)):{};
+    researchBy=rj.stocks||{};calls=rj.influencer_calls||[]
+  }catch(e){researchBy={};calls=[]}
+  try{
+    const cc=await gh(`/repos/${own}/${rep}/contents/influencer_calls.csv`);
+    callsSha=cc?cc.sha:null;callsCSV=cc?b64dec(cc.content):CALLS_HEADER+'\n'
+  }catch(e){callsSha=null;callsCSV=CALLS_HEADER+'\n'}
   try{
     const hf=await gh(`/repos/${own}/${rep}/contents/portfolio_history.csv`);
     const txt=hf?b64dec(hf.content):'';
@@ -2545,6 +2553,96 @@ function renderMasthead(list){
   </div>`}
 
 let history=[], researchBy={};
+// --- Influencer calls -------------------------------------------------
+// A scorecard for public calls named outside analysts/influencers made
+// (ticker, their published entry, target, stop-loss), scored against live
+// price. This is never this system's own buy/sell view: the no-advice
+// rule in HANDOFF is about what WE tell AD to do, not about recording and
+// scoring what someone else already told the public, in public.
+const CALLS_HEADER='date_added,influencer,source,source_url,ticker,exchange,call_price,target,stop_loss,horizon,note';
+let calls=[], callsSha=null, callsCSV=CALLS_HEADER+'\n';
+function callOf(ticker){
+  const open=calls.filter(c=>c.ticker===ticker&&c.status==='open');
+  return open.length?open[open.length-1]:null}
+function callPill(a0){
+  const c=callOf(a0.ticker); if(!c)return '';
+  return `<span class="pill" style="color:var(--fired);border-color:var(--fired)"
+    title="${c.influencer} — target ${fmt(parseFloat(c.target))}, stop-loss ${fmt(parseFloat(c.stop_loss))} (${c.source||'see source'})">
+    \u{1F4E3} ${c.influencer.split('(')[0].trim()}: T${fmt(parseFloat(c.target))} / SL${fmt(parseFloat(c.stop_loss))}</span>`}
+function callStatusLabel(s){
+  return s==='target_hit'?'\u{1F3AF} Target hit':s==='sl_hit'?'⛔ Stop-loss hit':'○ Open'}
+function callStatusColour(s){
+  return s==='target_hit'?'var(--armed)':s==='sl_hit'?'var(--crimson)':'var(--muted)'}
+function renderCalls(){
+  const box=$('list');
+  const rows=calls.slice().sort((x,y)=>(y.date_added||'').localeCompare(x.date_added||''));
+  box.innerHTML=`
+    <div class="card sub" style="font-size:12.5px">A scorecard of public buy calls made by named
+      outside analysts or influencers, with the target and stop-loss THEY published. Status is
+      arithmetic against those numbers, not a view this dashboard is forming of its own. Smallcase-style:
+      track the call, not re-pitch it.</div>
+    ${rows.length?rows.map(c=>{
+      const px=c.price!=null?parseFloat(c.price):null;
+      const rangeLo=parseFloat(c.stop_loss),rangeHi=parseFloat(c.target);
+      const pos=(px!=null&&isFinite(rangeLo)&&isFinite(rangeHi)&&rangeHi>rangeLo)
+        ?Math.max(0,Math.min(100,(px-rangeLo)/(rangeHi-rangeLo)*100)):null;
+      return `<div class="card alert">
+        <div class="top">
+          <span class="tk">${c.ticker}</span><span class="ex">${c.exchange}</span>
+          <span class="pill" style="color:${callStatusColour(c.status)};border-color:${callStatusColour(c.status)}">${callStatusLabel(c.status)}</span>
+          <span class="pill" style="margin-left:auto">${c.horizon||''}</span>
+        </div>
+        <div class="sub" style="margin-top:4px">${c.influencer}${c.source?' · '+c.source:''}
+          ${c.source_url?` · <a href="${c.source_url}" target="_blank" rel="noopener">source</a>`:''}
+          · called ${c.date_added||'?'}</div>
+        <div class="sub" style="margin-top:6px;color:var(--paper)">
+          Buy ${fmt(parseFloat(c.call_price))} · Target ${fmt(rangeHi)} · Stop-loss ${fmt(rangeLo)}
+          ${px!=null?` · Now ${fmt(px)}${c.pct_since_call!=null?` (${c.pct_since_call>0?'+':''}${c.pct_since_call}% since call)`:''}`:' · price not fetched yet'}</div>
+        ${pos!=null?`<div style="margin-top:8px;height:6px;border-radius:3px;background:var(--line);position:relative">
+          <div style="position:absolute;left:${pos}%;top:-3px;width:2px;height:12px;background:var(--paper)"></div>
+        </div><div class="sub" style="display:flex;justify-content:space-between;font-size:11px;margin-top:2px">
+          <span>SL ${fmt(rangeLo)}</span><span>Target ${fmt(rangeHi)}</span></div>`:''}
+        ${c.note?`<div class="note">${c.note}</div>`:''}
+      </div>`}).join(''):'<div class="card sub">No calls tracked yet. Add one below.</div>'}
+    <div class="card">
+      <div class="ttl" style="margin-bottom:8px">Add a call</div>
+      <label>Ticker</label><input id="cl-tk">
+      <label>Exchange</label><select id="cl-ex"><option>NSE</option><option>BSE</option><option>US</option></select>
+      <label>Influencer / analyst</label><input id="cl-inf" placeholder="e.g. Sumeet Bagadia (Choice Broking)">
+      <label>Source (publication)</label><input id="cl-src" placeholder="e.g. Livemint Muhurat Trading 2026">
+      <label>Source URL</label><input id="cl-url">
+      <label>Buy / call price</label><input id="cl-cp" inputmode="decimal">
+      <label>Target</label><input id="cl-tg" inputmode="decimal">
+      <label>Stop-loss</label><input id="cl-sl" inputmode="decimal">
+      <label>Horizon</label><input id="cl-hz" placeholder="e.g. Samvat 2083">
+      <label>Note</label><input id="cl-note">
+      <button style="margin-top:10px" onclick="addCall()">Stage call</button>
+      <button style="margin-top:10px" onclick="saveCalls()" ${callsDirty?'':'disabled'} id="cl-save">Save to GitHub</button>
+    </div>`}
+let callsDirty=false;
+function addCall(){
+  const g=id=>document.getElementById(id).value.trim();
+  const tk=g('cl-tk').toUpperCase();
+  if(!tk){toast('Ticker is required',true);return}
+  const row={date_added:new Date().toISOString().slice(0,10),influencer:g('cl-inf'),
+    source:g('cl-src'),source_url:g('cl-url'),ticker:tk,exchange:g('cl-ex')||'NSE',
+    call_price:g('cl-cp'),target:g('cl-tg'),stop_loss:g('cl-sl'),horizon:g('cl-hz'),
+    note:g('cl-note')};
+  const esc=v=>/[,"\n]/.test(v||'')?'"'+(v||'').replace(/"/g,'""')+'"':(v||'');
+  callsCSV += [row.date_added,row.influencer,row.source,row.source_url,row.ticker,
+    row.exchange,row.call_price,row.target,row.stop_loss,row.horizon,row.note]
+    .map(esc).join(',') + '\n';
+  calls.push({...row,status:'open',price:null});
+  callsDirty=true;toast(tk+' staged, press Save to GitHub');render()}
+async function saveCalls(){
+  try{
+    const body={message:'Add influencer call via dashboard',content:b64enc(callsCSV)};
+    if(callsSha)body.sha=callsSha;
+    const res=await gh(`/repos/${cfg.owner}/${cfg.repo}/contents/influencer_calls.csv`,
+      {method:'PUT',body:JSON.stringify(body)});
+    callsSha=res.content.sha;callsDirty=false;
+    toast('Saved. Status will fill in after tomorrow\'s research run.');render()
+  }catch(e){toast('Save failed: '+e.message,true)}}
 function renderPerf(){
   const box=$('perfcard');
   if(history.length<2){box.innerHTML='';return}
