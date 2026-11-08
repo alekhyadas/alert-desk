@@ -347,11 +347,41 @@
     .card{transition:border-color .15s}
     .card.dirty{border-color:var(--crimson-deep)}
   }
+  /* Calls page */
+  .modeseg{display:none;border:1px solid var(--line);border-radius:12px;overflow:hidden;background:var(--panel)}
+  .modeseg div{padding:7px 14px;font-size:13.5px;font-weight:600;color:var(--muted);cursor:pointer}
+  .modeseg div.on{background:var(--crimson-deep);color:#fff}
+  .cv-ghead{display:flex;align-items:center;gap:10px;padding:14px 16px;cursor:pointer}
+  .cv-ghead:hover{background:var(--panel2)}
+  .cv-row{display:grid;grid-template-columns:minmax(96px,150px) 92px minmax(0,1fr) 72px 140px;
+    align-items:center;gap:10px;padding:9px 16px;border-top:1px solid var(--line);font-size:12.5px}
+  .cv-row:hover{background:var(--panel2)}
+  .cv-row .tk2{font-family:'Bricolage Grotesque',sans-serif;font-weight:700;font-size:14px;
+    overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .cv-bar{height:6px;border-radius:3px;background:var(--line);position:relative}
+  .cv-bar i{position:absolute;left:0;top:0;bottom:0;border-radius:3px}
+  .cv-bar b{position:absolute;top:-3px;width:2px;height:12px;background:var(--paper);opacity:.75}
+  .cv-more{padding:12px 16px;text-align:center;color:var(--crimson);font-size:13px;cursor:pointer;
+    border-top:1px solid var(--line)}
+  .cv-more:hover{background:var(--panel2)}
+  .cv-ctrl{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+  .cv-seg{display:inline-flex;border:1px solid var(--line);border-radius:10px;overflow:hidden}
+  .cv-seg div{padding:8px 12px;font-size:13px;color:var(--muted);cursor:pointer;background:var(--panel)}
+  .cv-seg div.on{background:var(--panel2);color:var(--paper);font-weight:600}
+  .cv-chip{display:inline-flex;align-items:center;gap:8px;padding:7px 12px;border:1px solid var(--line);
+    border-radius:12px;background:var(--panel2);font-size:12.5px;cursor:pointer}
+  .cv-chip:hover{border-color:var(--paused)}
+  @media(max-width:700px){
+    .cv-row{grid-template-columns:minmax(0,1fr) auto;row-gap:5px}
+    .cv-row .cv-lv,.cv-row .cv-bar{grid-column:1/-1}
+    .cv-row>div:last-child{grid-column:1/-1;text-align:left!important}
+  }
 </style>
 </head>
 <body>
 <header>
   <div class="brand">Alert <em>Desk</em></div>
+  <div class="modeseg" id="modeseg"><div id="m-port" onclick="setMode('portfolio')">&#128188; Portfolio</div><div id="m-calls" onclick="setMode('calls')">&#128227; Calls</div></div>
   <button id="comfortbtn" class="ib" title="Larger text and buttons"
     aria-label="Toggle comfort mode" onclick="toggleComfort()"
     style="margin-left:auto;font-size:15px;font-weight:700">Aa</button>
@@ -379,6 +409,7 @@
 </div>
 
 <div id="app" style="display:none">
+ <div id="callsview" style="display:none"></div>
  <div id="shell">
   <div id="rail">
   <div id="digestcard"></div>
@@ -1660,6 +1691,12 @@ function accountsOf(list){
   return [...new Set(list.map(a=>a.account||'Unassigned'))].sort()}
 
 function render(){
+  $('modeseg').style.display='inline-flex';
+  $('m-port').classList.toggle('on',!callsMode);
+  $('m-calls').classList.toggle('on',callsMode);
+  $('shell').style.display=callsMode?'none':'';
+  $('callsview').style.display=callsMode?'':'none';
+  if(callsMode){renderCalls();$('savebar').classList.remove('show');return}
   const L=$('list'); L.innerHTML='';
   const alertsOnly=alerts.filter(a=>!isWatch(a));
   const watchOnly=alerts.filter(isWatch);
@@ -1686,8 +1723,7 @@ function render(){
                ['month','\u{1F4C6} Month'],
                ['news','\u{1F4F0} News'],
               ['audit','\u{1F550} Audit'],
-              ['breakouts','\u{1F680} Breakouts'],
-              ['calls','\u{1F4E3} Calls']];
+              ['breakouts','\u{1F680} Breakouts']];
   $('tabs').innerHTML=views.map(([k,lab])=>{
       const on=(k==='alerts')?isList:(tab===k);
       return `<div class="vtab${on?' on':''}" onclick="setTab('${k}')">${lab}</div>`
@@ -1719,7 +1755,7 @@ function render(){
 
   const analysis={peaks:renderPeaks,held:renderHeld,costs:renderCosts,
                   plan:renderPlan,month:renderMonth,news:renderNews,
-                  audit:renderAudit,breakouts:renderBreakouts,calls:renderCalls};
+                  audit:renderAudit,breakouts:renderBreakouts};
   $('sortbar').style.display=analysis[tab]?'none':'';
   if(analysis[tab]){analysis[tab]();$('savebar').classList.toggle('show',dirty);
     bulkDock();return}
@@ -2371,6 +2407,10 @@ async function loadAll(){
     researchBy=rj.stocks||{};calls=rj.influencer_calls||[]
   }catch(e){researchBy={};calls=[]}
   try{
+    const jf=await gh(`/repos/${own}/${rep}/contents/influencer_calls.json`);
+    if(jf){const j=JSON.parse(b64dec(jf.content)||'{}');calls=j.calls||calls;callsUpdated=j.updated||''}
+  }catch(e){}
+  try{
     const cc=await gh(`/repos/${own}/${rep}/contents/influencer_calls.csv`);
     callsSha=cc?cc.sha:null;callsCSV=cc?b64dec(cc.content):CALLS_HEADER+'\n'
   }catch(e){callsSha=null;callsCSV=CALLS_HEADER+'\n'}
@@ -2589,140 +2629,310 @@ function callStatusLabel(s){
   return '\u{1F3AF} T'+n+' hit'}
 function callStatusColour(s){
   return s==='sl_hit'?'var(--crimson)':s==='open'?'var(--muted)':'var(--armed)'}
-let callGroupOpen=new Set(), callsFilterStatus='all';
-function toggleCallGroup(name){
-  if(callGroupOpen.has(name))callGroupOpen.delete(name);else callGroupOpen.add(name);
+// --- Calls: a page of its own ---------------------------------------------
+// Not one of the portfolio analysis tabs. These are other people's public
+// calls, not holdings, so the whole portfolio shell (rail, masthead, add
+// forms) is hidden while this page is open and the width goes to the calls.
+// Built to stay usable at hundreds of picks: grouped and collapsed by
+// default, searchable, three ways to slice it, sortable, and paginated.
+let callsMode=false;
+try{callsMode=localStorage.getItem('alertdesk-mode')==='calls'}catch(e){}
+let callsUpdated='';
+let callGroupOpen=new Set(), callGroupAll=new Set();
+let callsFilterStatus='all', callsSearch='', callsView='analyst', callsSort='best', callsLimit=40;
+const CALL_GROUP_ROWS=25;
+
+function setMode(m){
+  callsMode=(m==='calls');
+  try{localStorage.setItem('alertdesk-mode',m)}catch(e){}
   render()}
-function setCallsFilter(f){callsFilterStatus=f;render()}
+function setCallsFilter(f){callsFilterStatus=f;callsLimit=40;renderCalls()}
+function setCallsView(v){callsView=v;callsLimit=40;renderCalls()}
+function setCallsSort(v){callsSort=v;renderCallsBody()}
+function moreCalls(){callsLimit+=60;renderCallsBody()}
+function toggleCallGroup(enc){
+  const k=decodeURIComponent(enc);
+  if(callGroupOpen.has(k))callGroupOpen.delete(k);else callGroupOpen.add(k);
+  renderCallsBody()}
+function showAllInGroup(enc){callGroupAll.add(decodeURIComponent(enc));renderCallsBody()}
+function jumpToCall(t){callsSearch=t;callsView='all';callsFilterStatus='all';callsLimit=40;renderCalls()}
 function callMatchesFilter(c){
   return callsFilterStatus==='all'?true
     :callsFilterStatus==='open'?c.status==='open'
     :callsFilterStatus==='sl'?c.status==='sl_hit'
     :/_hit$/.test(c.status)&&c.status!=='sl_hit'}
-// One compact row per call: a ticker, a status pill, the published
-// levels and the live %, no prose paragraph. The full-card version read
-// fine at 6 calls and became a wall at 71; this is what actually scales.
-function callRowHTML(c){
+
+// ---- small helpers ----
+const cEsc=s=>String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;')
+  .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+const cEnc=s=>encodeURIComponent(s);
+const cShort=n=>String(n||'').replace(/\s*\(.*\)\s*$/,'');
+const pctOf=c=>(c.pct_since_call!=null&&isFinite(parseFloat(c.pct_since_call)))?parseFloat(c.pct_since_call):null;
+const isWin=c=>/_hit$/.test(c.status)&&c.status!=='sl_hit';
+const isLoss=c=>c.status==='sl_hit';
+const fmtPct=p=>p==null?'—':(p>=0?'+':'')+p.toFixed(2)+'%';
+const pctCol=p=>p==null?'var(--muted)':p>=0?'var(--armed)':'var(--crimson)';
+function avgPct(list){
+  const v=list.map(pctOf).filter(x=>x!=null);
+  return v.length?v.reduce((a,b)=>a+b,0)/v.length:null}
+function parseIST(s){
+  if(!s)return null;
+  const d=new Date(String(s).replace(' ','T')+':00+05:30');
+  return isNaN(d.getTime())?null:d}
+function ago(d){
+  const m=Math.max(0,Math.round((Date.now()-d.getTime())/60000));
+  return m<1?'just now':m<60?m+' min ago':m<1440?Math.round(m/60)+' h ago':Math.round(m/1440)+' d ago'}
+function clockIST(d){return d.toLocaleTimeString('en-IN',{hour:'numeric',minute:'2-digit',timeZone:'Asia/Kolkata'})}
+function dayClockIST(d){
+  return d.toLocaleString('en-IN',{day:'numeric',month:'short',hour:'numeric',minute:'2-digit',timeZone:'Asia/Kolkata'})}
+function dayIST(s){
+  const d=new Date(String(s)+'T00:00:00+05:30');
+  return isNaN(d.getTime())?String(s||''):d.toLocaleDateString('en-IN',{day:'numeric',month:'short'})}
+
+function callsFiltered(){
+  const q=callsSearch.trim().toLowerCase();
+  return calls.filter(c=>{
+    if(!callMatchesFilter(c))return false;
+    if(!q)return true;
+    return [c.ticker,c.influencer,c.source,c.horizon,c.note,c.sebi_reg]
+      .filter(Boolean).join(' ').toLowerCase().includes(q)})}
+function callSorter(){
+  const cmp=(x,y)=>x===y?0:x<y?-1:1;
+  const best=c=>{const p=pctOf(c);return p==null?-Infinity:p};
+  const worst=c=>{const p=pctOf(c);return p==null?Infinity:p};
+  const dist=c=>{
+    const px=parseFloat(c.price),t=callTargets(c)[0];
+    return(isFinite(px)&&t&&px>0)?(t.v-px)/px:Infinity};
+  if(callsSort==='worst')return(a,b)=>cmp(worst(a),worst(b));
+  if(callsSort==='near')return(a,b)=>cmp(dist(a),dist(b));
+  if(callsSort==='new')return(a,b)=>cmp(b.date_added||'',a.date_added||'');
+  if(callsSort==='name')return(a,b)=>String(a.ticker).localeCompare(String(b.ticker));
+  return(a,b)=>cmp(best(b),best(a))}
+
+// ---- one call, one compact row ----
+// A thin bar shows where the price sits between its floor (the published
+// stop-loss, or the entry when none was published) and the first target;
+// the tick marks the entry price.
+function callBarHTML(c){
   const px=c.price!=null?parseFloat(c.price):null;
+  const cp=parseFloat(c.call_price),ts=callTargets(c);
+  if(px==null||!isFinite(cp)||!ts.length)return '<div></div>';
+  const sl=parseFloat(c.stop_loss);
+  const lo=isFinite(sl)?sl:cp,hi=ts[0].v;
+  if(!(hi>lo))return '<div></div>';
+  const at=v=>Math.max(0,Math.min(100,(v-lo)/(hi-lo)*100));
+  const col=px>=cp?'var(--armed)':'var(--crimson)';
+  return `<div class="cv-bar" title="Floor ${fmt(lo)} to first target ${fmt(hi)}">`
+    +`<i style="width:${at(px)}%;background:${col}"></i><b style="left:${at(cp)}%"></b></div>`}
+function callRowHTML(c,lead){
+  const px=c.price!=null?parseFloat(c.price):null;
+  const pct=pctOf(c);
   const ts=callTargets(c);
   const sl=parseFloat(c.stop_loss);
   const hasSL=isFinite(sl);
-  const pct=c.pct_since_call!=null?parseFloat(c.pct_since_call):null;
-  const tip=[c.date_added?'Called '+c.date_added:'',c.horizon,c.note].filter(Boolean).join(' — ');
-  return `<div style="display:flex;align-items:center;gap:10px;padding:9px 16px;
-      border-top:1px solid var(--line);flex-wrap:wrap;font-size:12.5px" title="${tip.replace(/"/g,'&quot;')}">
-    <span style="font-family:'Bricolage Grotesque',sans-serif;font-weight:700;min-width:92px">${c.ticker}</span>
-    <span class="pill" style="color:${callStatusColour(c.status)};border-color:${callStatusColour(c.status)};
-      padding:2px 8px;font-size:11px">${callStatusLabel(c.status)}</span>
-    <span class="sub" style="font-size:11.5px">Buy ${fmt(parseFloat(c.call_price))} · T ${ts.map(t=>fmt(t.v)).join('/')||'—'}${hasSL?' · SL '+fmt(sl):''}</span>
-    <span style="margin-left:auto;font-weight:600;white-space:nowrap;
-      color:${px==null?'var(--muted)':pct>=0?'var(--armed)':'var(--crimson)'}">
-      ${px==null?'not priced yet':`${fmt(px)} (${pct>0?'+':''}${pct}%)`}</span>
-    ${c.source_url?`<a href="${c.source_url}" target="_blank" rel="noopener" class="sub" style="font-size:11px"
-        onclick="event.stopPropagation()">source</a>`:''}
-  </div>`}
-function renderCalls(){
-  const box=$('list');
-  const rows=calls.slice();
-  // Equal-weighted scorecard return: the average % move since each call's
-  // own published entry price, across every call that has a live price.
-  // Not a portfolio (nobody is assumed to have bought equal amounts of
-  // each), just the same "how did the calls do" number smallcase shows
-  // per model portfolio.
-  const priced=rows.filter(c=>c.pct_since_call!=null&&isFinite(parseFloat(c.pct_since_call)));
-  const totalPct=priced.length
-    ?priced.reduce((s,c)=>s+parseFloat(c.pct_since_call),0)/priced.length:null;
-  const wins=rows.filter(c=>/_hit$/.test(c.status)&&c.status!=='sl_hit').length;
-  const losses=rows.filter(c=>c.status==='sl_hit').length;
-  const open=rows.length-wins-losses;
-  const barTot=rows.length||1;
+  const main=lead==='who'?cShort(c.influencer):c.ticker;
+  const sub=lead==='tickerwho'?cShort(c.influencer):(c.date_added?dayIST(c.date_added):'');
+  const pd=parseIST(c.priced_at);
+  let lv='Buy '+fmt(parseFloat(c.call_price))+' · T '+(ts.map(t=>fmt(t.v)).join(' / ')||'—')
+    +(hasSL?' · SL '+fmt(sl):'');
+  if(c.resolved_date)lv+=' · locked '+dayIST(c.resolved_date)+' at '+fmt(parseFloat(c.resolved_price));
+  const src=c.source_url?` · <a href="${cEsc(c.source_url)}" target="_blank" rel="noopener">source</a>`:'';
+  const tip=cEsc([c.influencer,c.horizon,c.note].filter(Boolean).join(' — '));
+  const price=px==null?'not priced yet':fmt(px)+' ('+fmtPct(pct)+')';
+  return `<div class="cv-row" title="${tip}">`
+    +`<div><div class="tk2">${cEsc(main)}</div><div class="sub" style="font-size:10.5px">${cEsc(sub)}</div></div>`
+    +`<div><span class="pill" style="color:${callStatusColour(c.status)};border-color:${callStatusColour(c.status)};`
+    +`padding:2px 8px;font-size:11px">${callStatusLabel(c.status)}</span></div>`
+    +`<div class="sub cv-lv" style="font-size:11.5px">${lv}${src}</div>`
+    +callBarHTML(c)
+    +`<div style="text-align:right"><div style="font-weight:600;color:${pctCol(pct)}">${price}</div>`
+    +(pd?`<div class="sub" style="font-size:10.5px">as of ${clockIST(pd)}</div>`:'')+`</div></div>`}
 
-  // Grouped by who made the call: the question this tab exists to answer
-  // ("which influencer's picks were actually good?") is a per-influencer
-  // number, not a flat scroll of 70-odd identical cards. Collapsed by
-  // default; tap a group to see its individual calls.
-  const groups=new Map();
-  rows.forEach(c=>{const k=c.influencer||'Unknown';
-    if(!groups.has(k))groups.set(k,[]);groups.get(k).push(c)});
-  const groupStats=[...groups.entries()].map(([name,members])=>{
-    const gp=members.filter(c=>c.pct_since_call!=null&&isFinite(parseFloat(c.pct_since_call)));
-    const avg=gp.length?gp.reduce((s,c)=>s+parseFloat(c.pct_since_call),0)/gp.length:null;
-    const gw=members.filter(c=>/_hit$/.test(c.status)&&c.status!=='sl_hit').length;
-    const gl=members.filter(c=>c.status==='sl_hit').length;
-    const sebi=(members.find(c=>c.sebi_reg)||{}).sebi_reg||'';
-    const sources=[...new Set(members.map(c=>c.source).filter(Boolean))];
-    return {name,members,avg,gw,gl,go:members.length-gw-gl,sebi,sources}})
-    .sort((a,b)=>(b.avg==null?-999:b.avg)-(a.avg==null?-999:a.avg));
+// ---- hero, movers, resolved ----
+function callsFreshnessHTML(){
+  let d=parseIST(callsUpdated);
+  if(!d){
+    const ds=calls.map(c=>parseIST(c.priced_at)).filter(Boolean);
+    if(ds.length)d=new Date(Math.max(...ds.map(x=>x.getTime())))}
+  if(!d)return '<span class="sub">No prices yet. They appear after the next scheduled check.</span>';
+  const mins=(Date.now()-d.getTime())/60000;
+  const open=marketOpenNow();
+  const stale=open&&mins>35;
+  const state=open?'market open, refreshes about every 15 min':'market closed, showing the last check';
+  return `Prices as of <b>${dayClockIST(d)} IST</b> · ${ago(d)} · <span class="sub">${state}</span>`
+    +(stale?` <span style="color:var(--fired)">⚠ ${Math.round(mins)} min old while the market is open, the scheduler may have stopped</span>`:'')}
+function callChipHTML(c,extra){
+  const p=pctOf(c);
+  return `<span class="cv-chip" onclick="jumpToCall('${cEsc(c.ticker).replace(/'/g,'')}')">`
+    +`<b>${cEsc(c.ticker)}</b>${extra||`<b style="color:${pctCol(p)}">${fmtPct(p)}</b>`}`
+    +`<span class="sub">${cEsc(cShort(c.influencer))}</span></span>`}
+function callsHeroHTML(){
+  const n=calls.length;
+  const priced=calls.filter(c=>pctOf(c)!=null);
+  const total=avgPct(calls);
+  const W=calls.filter(isWin).length,Ls=calls.filter(isLoss).length,O=n-W-Ls;
+  const analysts=new Set(calls.map(c=>c.influencer||'Unknown')).size;
+  const tot=n||1;
+  const resolved=W+Ls;
+  const seg=(k,col)=>k?`<div style="width:${k/tot*100}%;background:${col}"></div>`:'';
+  return `<div class="card" style="padding:20px 22px">`
+    +`<div style="display:flex;gap:28px;flex-wrap:wrap;align-items:flex-end;justify-content:space-between">`
+    +`<div><div class="sub" style="font-size:11.5px;letter-spacing:.05em">ALL CALLS · ${n} PICKS · ${analysts} ANALYSTS`
+    +`${priced.length<n?' · '+(n-priced.length)+' NOT PRICED YET':''}</div>`
+    +`<div style="font-size:46px;font-weight:700;line-height:1.1;margin-top:4px;color:${pctCol(total)}">${fmtPct(total)}</div>`
+    +`<div class="sub" style="font-size:12px;margin-top:2px">equal-weighted average move since each call's own entry price</div></div>`
+    +`<div style="text-align:right"><div style="font-size:22px;font-weight:700">${resolved?Math.round(W/resolved*100)+'%':'—'}</div>`
+    +`<div class="sub" style="font-size:11.5px">${resolved?'of '+resolved+' resolved calls hit target first':'no call has hit a target or stop-loss yet'}</div></div></div>`
+    +`<div style="display:flex;height:8px;border-radius:4px;overflow:hidden;margin-top:16px;background:var(--line)">`
+    +seg(W,'var(--armed)')+seg(Ls,'var(--crimson)')+seg(O,'var(--muted)')+`</div>`
+    +`<div class="sub" style="margin-top:8px;display:flex;gap:16px;flex-wrap:wrap">`
+    +`<span style="color:var(--armed)">\u{1F3AF} ${W} target hit</span>`
+    +`<span style="color:var(--crimson)">⛔ ${Ls} stop-loss hit</span><span>○ ${O} open</span></div>`
+    +`<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:12px;font-size:12.5px">`
+    +`<span>${callsFreshnessHTML()}</span>`
+    +`<button class="small" style="margin-left:auto" onclick="reloadCalls()">↻ Refresh</button></div></div>`}
+function callsHighlightsHTML(){
+  const resolved=calls.filter(c=>isWin(c)||isLoss(c));
+  const live=calls.filter(c=>pctOf(c)!=null&&!isWin(c)&&!isLoss(c)).sort((a,b)=>pctOf(b)-pctOf(a));
+  let out='';
+  if(resolved.length){
+    const chips=resolved.slice(0,12).map(c=>{
+      const w=isWin(c);
+      const what=(w?'\u{1F3AF} '+callStatusLabel(c.status).replace('\u{1F3AF} ',''):'⛔ stop-loss')
+        +' at '+fmt(parseFloat(c.resolved_price))+(c.resolved_date?' · '+dayIST(c.resolved_date):'');
+      return callChipHTML(c,`<b style="color:${w?'var(--armed)':'var(--crimson)'}">${cEsc(what)}</b>`)}).join('');
+    out+=`<div class="card"><div class="sub" style="font-size:11.5px;letter-spacing:.05em;margin-bottom:8px">`
+      +`RESOLVED, LOCKED IN (whichever came first stays)${resolved.length>12?' · showing 12 of '+resolved.length:''}</div>`
+      +`<div class="cv-ctrl">${chips}</div></div>`}
+  if(live.length>=4){
+    const best=live.slice(0,3),worst=live.slice(-3).reverse();
+    out+=`<div class="card"><div class="sub" style="font-size:11.5px;letter-spacing:.05em;margin-bottom:8px">BEST AND WORST OPEN CALLS RIGHT NOW</div>`
+      +`<div class="cv-ctrl" style="margin-bottom:8px">${best.map(c=>callChipHTML(c)).join('')}</div>`
+      +`<div class="cv-ctrl">${worst.map(c=>callChipHTML(c)).join('')}</div></div>`}
+  return out}
 
+// ---- controls ----
+function callsControlsHTML(){
+  const views=[['analyst','By analyst'],['stock','By stock'],['all','All calls']];
+  const sorts=[['best','Best first'],['worst','Worst first'],['near','Nearest target'],['new','Newest'],['name','A to Z']];
   const filters=[['all','All'],['open','○ Open'],['hit','\u{1F3AF} Target hit'],['sl','⛔ Stop-loss hit']];
+  return `<div class="card" style="padding:12px 14px">`
+    +`<div class="cv-ctrl" style="margin-bottom:10px">`
+    +`<input id="cq" type="search" autocomplete="off" style="flex:1;min-width:200px" value="${cEsc(callsSearch)}"`
+    +` placeholder="Search a ticker, analyst, source or note" oninput="callsSearch=this.value;callsLimit=40;renderCallsBody()">`
+    +`<div class="cv-seg">${views.map(([k,l])=>`<div class="${callsView===k?'on':''}" onclick="setCallsView('${k}')">${l}</div>`).join('')}</div>`
+    +`<select style="width:auto" onchange="setCallsSort(this.value)">`
+    +sorts.map(([k,l])=>`<option value="${k}"${callsSort===k?' selected':''}>${l}</option>`).join('')+`</select></div>`
+    +`<div class="cv-ctrl">${filters.map(([k,l])=>`<div class="tab${callsFilterStatus===k?' on':''}" onclick="setCallsFilter('${k}')">${l}</div>`).join('')}</div></div>`}
 
-  box.innerHTML=`
-    <div class="card sub" style="font-size:12.5px">A scorecard of public buy calls made by named
-      outside analysts or influencers, with the target(s) and stop-loss THEY published. Status is
-      arithmetic against those numbers, not a view this dashboard is forming of its own. Grouped by
-      who made the call, so you can see which analyst's picks actually worked.</div>
-    ${rows.length?`<div class="card" style="padding:18px 20px">
-      <div class="sub" style="font-size:11.5px;letter-spacing:.04em">TOTAL ACROSS ${rows.length} CALL${rows.length>1?'S':''}
-        ${priced.length<rows.length?' · '+(rows.length-priced.length)+' not priced yet':''}</div>
-      <div style="font-size:40px;font-weight:700;line-height:1.15;margin-top:4px;
-        color:${totalPct==null?'var(--muted)':totalPct>=0?'var(--armed)':'var(--crimson)'}">
-        ${totalPct==null?'—':(totalPct>=0?'+':'')+totalPct.toFixed(2)+'%'}</div>
-      <div class="sub" style="font-size:12px;margin-top:2px">equal-weighted average return since each call's own entry price</div>
-      <div style="display:flex;height:8px;border-radius:4px;overflow:hidden;margin-top:14px;background:var(--line)">
-        ${wins?`<div style="width:${wins/barTot*100}%;background:var(--armed)"></div>`:''}
-        ${losses?`<div style="width:${losses/barTot*100}%;background:var(--crimson)"></div>`:''}
-        ${open?`<div style="width:${open/barTot*100}%;background:var(--muted)"></div>`:''}
-      </div>
-      <div class="sub" style="margin-top:8px;display:flex;gap:14px;flex-wrap:wrap">
-        <span style="color:var(--armed)">\u{1F3AF} ${wins} target hit</span>
-        <span style="color:var(--crimson)">⛔ ${losses} stop-loss hit</span>
-        <span>○ ${open} open</span>
-      </div>
-    </div>`:''}
-    ${rows.length?`<div class="card" style="padding:8px 10px;display:flex;gap:6px;flex-wrap:wrap">
-      ${filters.map(([k,lab])=>`<div class="tab${callsFilterStatus===k?' on':''}" onclick="setCallsFilter('${k}')">${lab}</div>`).join('')}
-    </div>`:''}
-    ${rows.length?groupStats.map(g=>{
-      const isOpen=callGroupOpen.has(g.name);
-      const visible=g.members.filter(callMatchesFilter);
-      return `<div class="card" style="padding:0;overflow:hidden">
-        <div style="display:flex;align-items:center;gap:10px;padding:14px 16px;cursor:pointer"
-             onclick="toggleCallGroup('${g.name.replace(/'/g,"\\'")}')">
-          <span style="display:inline-block;color:var(--muted);transition:transform .15s;
-            transform:rotate(${isOpen?90:0}deg)">▸</span>
-          <div style="flex:1;min-width:0">
-            <div style="font-weight:600;font-size:14px">${g.name}</div>
-            <div class="sub" style="font-size:11px">${g.members.length} call${g.members.length>1?'s':''}
-              ${g.sebi?' · '+g.sebi:''}${g.sources.length?' · '+g.sources.join(', '):''}</div>
-          </div>
-          <div style="text-align:right">
-            <div style="font-size:18px;font-weight:700;
-              color:${g.avg==null?'var(--muted)':g.avg>=0?'var(--armed)':'var(--crimson)'}">
-              ${g.avg==null?'—':(g.avg>=0?'+':'')+g.avg.toFixed(2)+'%'}</div>
-            <div class="sub" style="font-size:10.5px">${g.gw}\u{1F3AF} ${g.gl}⛔ ${g.go}○</div>
-          </div>
-        </div>
-        ${isOpen?(visible.length?visible.map(callRowHTML).join('')
-          :`<div class="sub" style="padding:10px 16px;border-top:1px solid var(--line)">No calls match this filter.</div>`):''}
-      </div>`}).join(''):'<div class="card sub">No calls tracked yet. Add one below.</div>'}
-    <div class="card">
-      <div class="ttl" style="margin-bottom:8px">Add a call</div>
-      <label>Ticker</label><input id="cl-tk">
-      <label>Exchange</label><select id="cl-ex"><option>NSE</option><option>BSE</option><option>US</option></select>
-      <label>Influencer / analyst</label><input id="cl-inf" placeholder="e.g. Sumeet Bagadia (Choice Broking)">
-      <label>Source (publication)</label><input id="cl-src" placeholder="e.g. Livemint Muhurat Trading 2026">
-      <label>Source URL</label><input id="cl-url">
-      <label>Buy / call price</label><input id="cl-cp" inputmode="decimal">
-      <label>Target 1</label><input id="cl-tg1" inputmode="decimal">
-      <label>Target 2 (optional)</label><input id="cl-tg2" inputmode="decimal">
-      <label>Target 3 (optional)</label><input id="cl-tg3" inputmode="decimal">
-      <label>Stop-loss (optional)</label><input id="cl-sl" inputmode="decimal">
-      <label>Horizon</label><input id="cl-hz" placeholder="e.g. Samvat 2083, or 1-2 years">
-      <label>SEBI registration (if a registered analyst)</label><input id="cl-sebi" placeholder="e.g. SEBI INH000024921">
-      <label>Note</label><input id="cl-note">
-      <button style="margin-top:10px" onclick="addCall()">Stage call</button>
-      <button style="margin-top:10px" onclick="saveCalls()" ${callsDirty?'':'disabled'} id="cl-save">Save to GitHub</button>
-    </div>`}
+// ---- the three views ----
+function callGroupHeadHTML(key,title,subtitle,avg,w,l,o,open){
+  const tot=(w+l+o)||1;
+  const seg=(k,col)=>k?`<div style="width:${k/tot*100}%;background:${col}"></div>`:'';
+  return `<div class="cv-ghead" onclick="toggleCallGroup('${cEnc(key)}')">`
+    +`<span style="display:inline-block;color:var(--muted);transition:transform .15s;transform:rotate(${open?90:0}deg)">▸</span>`
+    +`<div style="flex:1;min-width:0"><div style="font-weight:600;font-size:14px">${cEsc(title)}</div>`
+    +`<div class="sub" style="font-size:11px">${cEsc(subtitle)}</div>`
+    +`<div style="display:flex;height:4px;border-radius:2px;overflow:hidden;margin-top:6px;background:var(--line);max-width:220px">`
+    +seg(w,'var(--armed)')+seg(l,'var(--crimson)')+seg(o,'var(--muted)')+`</div></div>`
+    +`<div style="text-align:right"><div style="font-size:19px;font-weight:700;color:${pctCol(avg)}">${fmtPct(avg)}</div>`
+    +`<div class="sub" style="font-size:10.5px">${w}\u{1F3AF} ${l}⛔ ${o}○</div></div></div>`}
+function callGroupRowsHTML(key,rows,lead){
+  const all=callGroupAll.has(key);
+  const shown=all?rows:rows.slice(0,CALL_GROUP_ROWS);
+  let out=shown.map(c=>callRowHTML(c,lead)).join('');
+  if(rows.length>shown.length)
+    out+=`<div class="cv-more" onclick="showAllInGroup('${cEnc(key)}')">Show all ${rows.length} calls</div>`;
+  return out}
+function callsAnalystHTML(list){
+  const q=callsSearch.trim()!==''||callsFilterStatus!=='all';
+  const vis=new Map();
+  list.forEach(c=>{const k=c.influencer||'Unknown';if(!vis.has(k))vis.set(k,[]);vis.get(k).push(c)});
+  const all=new Map();
+  calls.forEach(c=>{const k=c.influencer||'Unknown';if(!all.has(k))all.set(k,[]);all.get(k).push(c)});
+  const groups=[...all.entries()].filter(([k])=>vis.has(k)).map(([k,members])=>({
+    k,members,rows:vis.get(k),avg:avgPct(members),
+    w:members.filter(isWin).length,l:members.filter(isLoss).length,
+    sebi:(members.find(c=>c.sebi_reg)||{}).sebi_reg||'',
+    sources:[...new Set(members.map(c=>c.source).filter(Boolean))]}))
+    .sort((a,b)=>(b.avg==null?-999:b.avg)-(a.avg==null?-999:a.avg));
+  return groups.map(g=>{
+    const open=callGroupOpen.has(g.k)||q;
+    const sub=g.members.length+' call'+(g.members.length>1?'s':'')+(g.sebi?' · '+g.sebi:'')
+      +(g.sources.length?' · '+g.sources.slice(0,2).join(', ')+(g.sources.length>2?' +'+(g.sources.length-2)+' more':''):'');
+    return `<div class="card" style="padding:0;overflow:hidden">`
+      +callGroupHeadHTML(g.k,g.k,sub,g.avg,g.w,g.l,g.members.length-g.w-g.l,open)
+      +(open?callGroupRowsHTML(g.k,g.rows,'ticker'):'')+`</div>`}).join('')}
+function callsStockHTML(list){
+  const q=callsSearch.trim()!==''||callsFilterStatus!=='all';
+  const by=new Map();
+  list.forEach(c=>{if(!by.has(c.ticker))by.set(c.ticker,[]);by.get(c.ticker).push(c)});
+  const groups=[...by.entries()].map(([t,rows])=>({
+    t,rows,avg:avgPct(rows),who:[...new Set(rows.map(c=>cShort(c.influencer)))],
+    w:rows.filter(isWin).length,l:rows.filter(isLoss).length}))
+    .sort((a,b)=>b.who.length-a.who.length||(b.avg==null?-999:b.avg)-(a.avg==null?-999:a.avg));
+  const shown=groups.slice(0,callsLimit);
+  let out=shown.map(g=>{
+    const key='s:'+g.t,open=callGroupOpen.has(key)||q;
+    const sub=g.who.length+' analyst'+(g.who.length>1?'s':'')+': '+g.who.slice(0,3).join(', ')
+      +(g.who.length>3?' +'+(g.who.length-3)+' more':'');
+    return `<div class="card" style="padding:0;overflow:hidden">`
+      +callGroupHeadHTML(key,g.t,sub,g.avg,g.w,g.l,g.rows.length-g.w-g.l,open)
+      +(open?callGroupRowsHTML(key,g.rows,'who'):'')+`</div>`}).join('');
+  if(groups.length>shown.length)
+    out+=`<div class="cv-more card" onclick="moreCalls()">Show more stocks (${groups.length-shown.length} left)</div>`;
+  return out}
+function callsAllHTML(list){
+  const shown=list.slice(0,callsLimit);
+  let out=`<div class="card" style="padding:0;overflow:hidden">`+shown.map(c=>callRowHTML(c,'tickerwho')).join('');
+  if(list.length>shown.length)
+    out+=`<div class="cv-more" onclick="moreCalls()">Show more (${list.length-shown.length} left)</div>`;
+  return out+`</div>`}
+function renderCallsBody(){
+  const body=$('callsbody');
+  if(!body)return;
+  if(!calls.length){body.innerHTML='<div class="card sub">No calls tracked yet. Add one below.</div>';return}
+  const list=callsFiltered().sort(callSorter());
+  if(!list.length){body.innerHTML='<div class="card sub">No calls match. Clear the search or pick another filter.</div>';return}
+  const head=`<div class="sub" style="margin:2px 4px 8px">${list.length} of ${calls.length} calls</div>`;
+  body.innerHTML=head+(callsView==='all'?callsAllHTML(list):callsView==='stock'?callsStockHTML(list):callsAnalystHTML(list))}
+
+function callsAddFormHTML(){
+  return `<details class="card"${callsDirty?' open':''}><summary style="font-size:14px;color:var(--paper);font-weight:600">`
+    +`➕ Add a call</summary><div style="margin-top:8px">`
+    +`<label>Ticker</label><input id="cl-tk">`
+    +`<label>Exchange</label><select id="cl-ex"><option>NSE</option><option>BSE</option><option>US</option></select>`
+    +`<label>Influencer / analyst</label><input id="cl-inf" placeholder="e.g. Sumeet Bagadia (Choice Broking)">`
+    +`<label>Source (publication)</label><input id="cl-src" placeholder="e.g. Livemint Muhurat Trading 2026">`
+    +`<label>Source URL</label><input id="cl-url">`
+    +`<label>Buy / call price</label><input id="cl-cp" inputmode="decimal">`
+    +`<label>Target 1</label><input id="cl-tg1" inputmode="decimal">`
+    +`<label>Target 2 (optional)</label><input id="cl-tg2" inputmode="decimal">`
+    +`<label>Target 3 (optional)</label><input id="cl-tg3" inputmode="decimal">`
+    +`<label>Stop-loss (optional)</label><input id="cl-sl" inputmode="decimal">`
+    +`<label>Horizon</label><input id="cl-hz" placeholder="e.g. Samvat 2083, or 1-2 years">`
+    +`<label>SEBI registration (if a registered analyst)</label><input id="cl-sebi" placeholder="e.g. SEBI INH000024921">`
+    +`<label>Note</label><input id="cl-note">`
+    +`<button style="margin-top:10px" onclick="addCall()">Stage call</button> `
+    +`<button style="margin-top:10px" onclick="saveCalls()"${callsDirty?'':' disabled'} id="cl-save">Save to GitHub</button>`
+    +`</div></details>`}
+function renderCalls(){
+  const box=$('callsview');
+  if(!box)return;
+  const note=`<div class="sub" style="font-size:12px;margin:0 2px 12px">Public buy calls by named analysts and influencers, `
+    +`scored against the entry, target(s) and stop-loss <i>they</i> published. Arithmetic on their numbers, not a view of this dashboard's own.</div>`;
+  box.innerHTML=note+(calls.length?callsHeroHTML()+callsHighlightsHTML():'')
+    +callsControlsHTML()+'<div id="callsbody"></div>'+callsAddFormHTML();
+  renderCallsBody()}
+async function reloadCalls(silent){
+  if(callsDirty||!cfg||!cfg.token)return;
+  try{
+    const jf=await gh(`/repos/${cfg.owner}/${cfg.repo}/contents/influencer_calls.json`);
+    if(jf){const j=JSON.parse(b64dec(jf.content)||'{}');calls=j.calls||calls;callsUpdated=j.updated||''}
+    if(callsMode)renderCalls();
+    if(!silent)toast('Calls refreshed')
+  }catch(e){if(!silent)toast('Could not refresh: '+e.message,true)}}
+setInterval(()=>{if(callsMode&&!document.hidden)reloadCalls(true)},300000);
 let callsDirty=false;
 function addCall(){
   const g=id=>document.getElementById(id).value.trim();
