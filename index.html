@@ -2589,9 +2589,41 @@ function callStatusLabel(s){
   return '\u{1F3AF} T'+n+' hit'}
 function callStatusColour(s){
   return s==='sl_hit'?'var(--crimson)':s==='open'?'var(--muted)':'var(--armed)'}
+let callGroupOpen=new Set(), callsFilterStatus='all';
+function toggleCallGroup(name){
+  if(callGroupOpen.has(name))callGroupOpen.delete(name);else callGroupOpen.add(name);
+  render()}
+function setCallsFilter(f){callsFilterStatus=f;render()}
+function callMatchesFilter(c){
+  return callsFilterStatus==='all'?true
+    :callsFilterStatus==='open'?c.status==='open'
+    :callsFilterStatus==='sl'?c.status==='sl_hit'
+    :/_hit$/.test(c.status)&&c.status!=='sl_hit'}
+// One compact row per call: a ticker, a status pill, the published
+// levels and the live %, no prose paragraph. The full-card version read
+// fine at 6 calls and became a wall at 71; this is what actually scales.
+function callRowHTML(c){
+  const px=c.price!=null?parseFloat(c.price):null;
+  const ts=callTargets(c);
+  const sl=parseFloat(c.stop_loss);
+  const hasSL=isFinite(sl);
+  const pct=c.pct_since_call!=null?parseFloat(c.pct_since_call):null;
+  const tip=[c.date_added?'Called '+c.date_added:'',c.horizon,c.note].filter(Boolean).join(' — ');
+  return `<div style="display:flex;align-items:center;gap:10px;padding:9px 16px;
+      border-top:1px solid var(--line);flex-wrap:wrap;font-size:12.5px" title="${tip.replace(/"/g,'&quot;')}">
+    <span style="font-family:'Bricolage Grotesque',sans-serif;font-weight:700;min-width:92px">${c.ticker}</span>
+    <span class="pill" style="color:${callStatusColour(c.status)};border-color:${callStatusColour(c.status)};
+      padding:2px 8px;font-size:11px">${callStatusLabel(c.status)}</span>
+    <span class="sub" style="font-size:11.5px">Buy ${fmt(parseFloat(c.call_price))} · T ${ts.map(t=>fmt(t.v)).join('/')||'—'}${hasSL?' · SL '+fmt(sl):''}</span>
+    <span style="margin-left:auto;font-weight:600;white-space:nowrap;
+      color:${px==null?'var(--muted)':pct>=0?'var(--armed)':'var(--crimson)'}">
+      ${px==null?'not priced yet':`${fmt(px)} (${pct>0?'+':''}${pct}%)`}</span>
+    ${c.source_url?`<a href="${c.source_url}" target="_blank" rel="noopener" class="sub" style="font-size:11px"
+        onclick="event.stopPropagation()">source</a>`:''}
+  </div>`}
 function renderCalls(){
   const box=$('list');
-  const rows=calls.slice().sort((x,y)=>(y.date_added||'').localeCompare(x.date_added||''));
+  const rows=calls.slice();
   // Equal-weighted scorecard return: the average % move since each call's
   // own published entry price, across every call that has a live price.
   // Not a portfolio (nobody is assumed to have bought equal amounts of
@@ -2603,50 +2635,75 @@ function renderCalls(){
   const wins=rows.filter(c=>/_hit$/.test(c.status)&&c.status!=='sl_hit').length;
   const losses=rows.filter(c=>c.status==='sl_hit').length;
   const open=rows.length-wins-losses;
+  const barTot=rows.length||1;
+
+  // Grouped by who made the call: the question this tab exists to answer
+  // ("which influencer's picks were actually good?") is a per-influencer
+  // number, not a flat scroll of 70-odd identical cards. Collapsed by
+  // default; tap a group to see its individual calls.
+  const groups=new Map();
+  rows.forEach(c=>{const k=c.influencer||'Unknown';
+    if(!groups.has(k))groups.set(k,[]);groups.get(k).push(c)});
+  const groupStats=[...groups.entries()].map(([name,members])=>{
+    const gp=members.filter(c=>c.pct_since_call!=null&&isFinite(parseFloat(c.pct_since_call)));
+    const avg=gp.length?gp.reduce((s,c)=>s+parseFloat(c.pct_since_call),0)/gp.length:null;
+    const gw=members.filter(c=>/_hit$/.test(c.status)&&c.status!=='sl_hit').length;
+    const gl=members.filter(c=>c.status==='sl_hit').length;
+    const sebi=(members.find(c=>c.sebi_reg)||{}).sebi_reg||'';
+    const sources=[...new Set(members.map(c=>c.source).filter(Boolean))];
+    return {name,members,avg,gw,gl,go:members.length-gw-gl,sebi,sources}})
+    .sort((a,b)=>(b.avg==null?-999:b.avg)-(a.avg==null?-999:a.avg));
+
+  const filters=[['all','All'],['open','○ Open'],['hit','\u{1F3AF} Target hit'],['sl','⛔ Stop-loss hit']];
+
   box.innerHTML=`
     <div class="card sub" style="font-size:12.5px">A scorecard of public buy calls made by named
       outside analysts or influencers, with the target(s) and stop-loss THEY published. Status is
-      arithmetic against those numbers, not a view this dashboard is forming of its own. Smallcase-style:
-      track the call, not re-pitch it.</div>
-    ${rows.length?`<div class="card" style="padding:14px 16px">
-      <div class="sub" style="font-size:11.5px">TOTAL ACROSS ${rows.length} CALL${rows.length>1?'S':''}
+      arithmetic against those numbers, not a view this dashboard is forming of its own. Grouped by
+      who made the call, so you can see which analyst's picks actually worked.</div>
+    ${rows.length?`<div class="card" style="padding:18px 20px">
+      <div class="sub" style="font-size:11.5px;letter-spacing:.04em">TOTAL ACROSS ${rows.length} CALL${rows.length>1?'S':''}
         ${priced.length<rows.length?' · '+(rows.length-priced.length)+' not priced yet':''}</div>
-      <div style="font-size:26px;font-weight:700;margin-top:2px;
+      <div style="font-size:40px;font-weight:700;line-height:1.15;margin-top:4px;
         color:${totalPct==null?'var(--muted)':totalPct>=0?'var(--armed)':'var(--crimson)'}">
-        ${totalPct==null?'—':(totalPct>=0?'+':'')+totalPct.toFixed(2)+'%'}
-        <span class="sub" style="font-size:12px;font-weight:400">equal-weighted, since each call's own entry price</span></div>
-      <div class="sub" style="margin-top:6px">
-        <span style="color:var(--armed)">\u{1F3AF} ${wins} target hit</span> ·
-        <span style="color:var(--crimson)">⛔ ${losses} stop-loss hit</span> ·
-        <span>○ ${open} open</span></div>
+        ${totalPct==null?'—':(totalPct>=0?'+':'')+totalPct.toFixed(2)+'%'}</div>
+      <div class="sub" style="font-size:12px;margin-top:2px">equal-weighted average return since each call's own entry price</div>
+      <div style="display:flex;height:8px;border-radius:4px;overflow:hidden;margin-top:14px;background:var(--line)">
+        ${wins?`<div style="width:${wins/barTot*100}%;background:var(--armed)"></div>`:''}
+        ${losses?`<div style="width:${losses/barTot*100}%;background:var(--crimson)"></div>`:''}
+        ${open?`<div style="width:${open/barTot*100}%;background:var(--muted)"></div>`:''}
+      </div>
+      <div class="sub" style="margin-top:8px;display:flex;gap:14px;flex-wrap:wrap">
+        <span style="color:var(--armed)">\u{1F3AF} ${wins} target hit</span>
+        <span style="color:var(--crimson)">⛔ ${losses} stop-loss hit</span>
+        <span>○ ${open} open</span>
+      </div>
     </div>`:''}
-    ${rows.length?rows.map(c=>{
-      const px=c.price!=null?parseFloat(c.price):null;
-      const ts=callTargets(c);
-      const sl=parseFloat(c.stop_loss);
-      const hasSL=isFinite(sl);
-      const lastT=ts.length?ts[ts.length-1].v:null;
-      const lo=hasSL?sl:parseFloat(c.call_price);
-      const pos=(px!=null&&lastT!=null&&isFinite(lo)&&lastT>lo)
-        ?Math.max(0,Math.min(100,(px-lo)/(lastT-lo)*100)):null;
-      return `<div class="card alert">
-        <div class="top">
-          <span class="tk">${c.ticker}</span><span class="ex">${c.exchange}</span>
-          <span class="pill" style="color:${callStatusColour(c.status)};border-color:${callStatusColour(c.status)}">${callStatusLabel(c.status)}</span>
-          <span class="pill" style="margin-left:auto">${c.horizon||''}</span>
+    ${rows.length?`<div class="card" style="padding:8px 10px;display:flex;gap:6px;flex-wrap:wrap">
+      ${filters.map(([k,lab])=>`<div class="tab${callsFilterStatus===k?' on':''}" onclick="setCallsFilter('${k}')">${lab}</div>`).join('')}
+    </div>`:''}
+    ${rows.length?groupStats.map(g=>{
+      const isOpen=callGroupOpen.has(g.name);
+      const visible=g.members.filter(callMatchesFilter);
+      return `<div class="card" style="padding:0;overflow:hidden">
+        <div style="display:flex;align-items:center;gap:10px;padding:14px 16px;cursor:pointer"
+             onclick="toggleCallGroup('${g.name.replace(/'/g,"\\'")}')">
+          <span style="display:inline-block;color:var(--muted);transition:transform .15s;
+            transform:rotate(${isOpen?90:0}deg)">▸</span>
+          <div style="flex:1;min-width:0">
+            <div style="font-weight:600;font-size:14px">${g.name}</div>
+            <div class="sub" style="font-size:11px">${g.members.length} call${g.members.length>1?'s':''}
+              ${g.sebi?' · '+g.sebi:''}${g.sources.length?' · '+g.sources.join(', '):''}</div>
+          </div>
+          <div style="text-align:right">
+            <div style="font-size:18px;font-weight:700;
+              color:${g.avg==null?'var(--muted)':g.avg>=0?'var(--armed)':'var(--crimson)'}">
+              ${g.avg==null?'—':(g.avg>=0?'+':'')+g.avg.toFixed(2)+'%'}</div>
+            <div class="sub" style="font-size:10.5px">${g.gw}\u{1F3AF} ${g.gl}⛔ ${g.go}○</div>
+          </div>
         </div>
-        <div class="sub" style="margin-top:4px">${c.influencer}${c.source?' · '+c.source:''}
-          ${c.source_url?` · <a href="${c.source_url}" target="_blank" rel="noopener">source</a>`:''}
-          · called ${c.date_added||'?'}${c.sebi_reg?' · '+c.sebi_reg:''}</div>
-        <div class="sub" style="margin-top:6px;color:var(--paper)">
-          Buy ${fmt(parseFloat(c.call_price))} · Target${ts.length>1?'s':''} ${ts.map(t=>fmt(t.v)).join(' / ')||'—'}
-          ${hasSL?' · Stop-loss '+fmt(sl):' · no stop-loss published'}
-          ${px!=null?` · Now ${fmt(px)}${c.pct_since_call!=null?` (${c.pct_since_call>0?'+':''}${c.pct_since_call}% since call)`:''}`:' · price not fetched yet'}</div>
-        ${pos!=null?`<div style="margin-top:8px;height:6px;border-radius:3px;background:var(--line);position:relative">
-          <div style="position:absolute;left:${pos}%;top:-3px;width:2px;height:12px;background:var(--paper)"></div>
-        </div><div class="sub" style="display:flex;justify-content:space-between;font-size:11px;margin-top:2px">
-          <span>${hasSL?'SL '+fmt(lo):'Entry '+fmt(lo)}</span><span>${ts.map(t=>'T'+t.n+' '+fmt(t.v)).join(' · ')}</span></div>`:''}
-        ${c.note?`<div class="note">${c.note}</div>`:''}
+        ${isOpen?(visible.length?visible.map(callRowHTML).join('')
+          :`<div class="sub" style="padding:10px 16px;border-top:1px solid var(--line)">No calls match this filter.</div>`):''}
       </div>`}).join(''):'<div class="card sub">No calls tracked yet. Add one below.</div>'}
     <div class="card">
       <div class="ttl" style="margin-bottom:8px">Add a call</div>
