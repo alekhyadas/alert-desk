@@ -522,7 +522,7 @@ function hdrs(){return{'Authorization':'Bearer '+cfg.token,'Accept':'application
 function b64enc(s){return btoa(unescape(encodeURIComponent(s)))}
 function b64dec(s){return decodeURIComponent(escape(atob(s.replace(/\n/g,''))))}
 
-async function gh(path,opts){const r=await fetch(API+path,Object.assign({headers:hdrs()},opts||{}));
+async function gh(path,opts){const r=await fetch(API+path,Object.assign({headers:hdrs(),cache:'no-store'},opts||{}));
   if(r.status===404)return null;
   if(!r.ok)throw new Error('GitHub API '+r.status+' on '+path);
   return r.json()}
@@ -2811,6 +2811,127 @@ function callsHighlightsHTML(){
       +`<div class="cv-ctrl">${worst.map(c=>callChipHTML(c)).join('')}</div></div>`}
   return out}
 
+// ---- who is actually good: leaderboard + share ----
+// Plain arithmetic on each source's own published calls. A small sample is
+// shrunk toward zero (n/(n+3)) so one lucky pick cannot top the table, and
+// anyone with fewer than 3 priced calls is marked "too early", not ranked.
+function callBoard(){
+  const by=new Map();
+  calls.forEach(c=>{const k=c.influencer||'Unknown';if(!by.has(k))by.set(k,[]);by.get(k).push(c)});
+  const rows=[...by.entries()].map(([k,m])=>{
+    const pr=m.filter(c=>pctOf(c)!=null),n=pr.length;
+    const avg=avgPct(m),up=pr.filter(c=>pctOf(c)>0).length;
+    const W=m.filter(isWin).length,L=m.filter(isLoss).length;
+    const sorted=pr.slice().sort((a,b)=>pctOf(b)-pctOf(a));
+    return{k,name:cShort(k),calls:m.length,n,avg,up,upPct:n?Math.round(up/n*100):null,W,L,
+      score:avg==null?-999:avg*n/(n+3),early:n<3,best:sorted[0]||null,worst:sorted[sorted.length-1]||null,
+      sebi:(m.find(c=>c.sebi_reg)||{}).sebi_reg||'',members:m}});
+  const ranked=rows.filter(r=>!r.early).sort((a,b)=>b.score-a.score);
+  const early=rows.filter(r=>r.early).sort((a,b)=>(b.avg==null?-999:b.avg)-(a.avg==null?-999:a.avg));
+  return{ranked,early}}
+function callVerdict(r){
+  if(r.avg==null)return['—','var(--muted)'];
+  if(r.avg>=4&&r.upPct>=60)return['Strong so far','var(--armed)'];
+  if(r.avg<0||r.upPct<40)return['Weak so far','var(--crimson)'];
+  return['Mixed so far','var(--paused)']}
+function callMiniBars(r){
+  const v=r.members.map(pctOf).filter(x=>x!=null).sort((a,b)=>b-a);
+  if(!v.length)return '';
+  const mx=Math.max(...v.map(Math.abs),1);
+  return `<div style="display:flex;align-items:center;gap:2px;height:22px;margin-top:6px">`
+    +v.map(x=>`<i title="${fmtPct(x)}" style="flex:1;max-width:10px;min-width:3px;height:${Math.max(2,Math.abs(x)/mx*20)}px;`
+      +`background:${x>=0?'var(--armed)':'var(--crimson)'};border-radius:1px"></i>`).join('')+`</div>`}
+function callsBoardHTML(){
+  const {ranked,early}=callBoard();
+  if(!ranked.length&&!early.length)return '';
+  const row=(r,i)=>{
+    const [vt,vc]=callVerdict(r);
+    return `<div style="display:flex;gap:12px;align-items:flex-start;padding:12px 0;border-top:1px solid var(--line)">`
+      +`<div style="width:24px;font-weight:700;color:var(--muted)">${i==null?'·':i+1}</div>`
+      +`<div style="flex:1;min-width:0"><div style="font-weight:600;font-size:14px">${cEsc(r.name)}</div>`
+      +`<div class="sub" style="font-size:11px">${r.calls} calls · ${r.upPct==null?'not priced':r.upPct+'% in profit'}`
+      +`${r.W+r.L?' · '+r.W+'\u{1F3AF} '+r.L+'⛔':''}${r.sebi?' · '+cEsc(r.sebi):''}</div>`
+      +`<div class="sub" style="font-size:11px;margin-top:2px">`
+      +`${r.best?'Best '+cEsc(r.best.ticker)+' '+fmtPct(pctOf(r.best)):''}`
+      +`${r.worst&&r.worst!==r.best?' · Worst '+cEsc(r.worst.ticker)+' '+fmtPct(pctOf(r.worst)):''}</div>`
+      +callMiniBars(r)+`</div>`
+      +`<div style="text-align:right"><div style="font-size:20px;font-weight:700;color:${pctCol(r.avg)}">${fmtPct(r.avg)}</div>`
+      +`<div style="font-size:11px;color:${vc}">${r.early?'too early':vt}</div></div></div>`};
+  return `<div class="card" style="padding:16px 18px">`
+    +`<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">`
+    +`<div style="flex:1;min-width:200px"><div class="sub" style="font-size:11.5px;letter-spacing:.05em">WHO IS ACTUALLY GOOD, SO FAR</div>`
+    +`<div class="sub" style="font-size:11.5px;margin-top:2px">Average move since each call, shrunk for small samples. `
+    +`Most calls are days old, so treat this as early.</div></div>`
+    +`<div class="cv-ctrl"><button class="small" onclick="shareBoard('share')">Share</button>`
+    +`<button class="small" onclick="shareBoard('image')">Save image</button>`
+    +`<button class="small" onclick="shareBoard('copy')">Copy text</button></div></div>`
+    +ranked.map((r,i)=>row(r,i)).join('')
+    +(early.length?`<div class="sub" style="font-size:11px;margin:10px 0 0;padding-top:8px;border-top:1px solid var(--line)">`
+      +`TOO FEW PRICED CALLS TO RANK (under 3)</div>`+early.map(r=>row(r,null)).join(''):'')
+    +`</div>`}
+function boardText(){
+  const {ranked,early}=callBoard();
+  const d=new Date().toLocaleDateString('en-IN',{day:'numeric',month:'short',year:'numeric',timeZone:'Asia/Kolkata'});
+  const line=(r,i)=>`${i==null?'-':(i+1)+'.'} ${r.name}: ${fmtPct(r.avg)} avg, ${r.upPct==null?'n/a':r.upPct+'% in profit'}, ${r.calls} calls`
+    +(r.W+r.L?`, ${r.W} target / ${r.L} SL hit`:'');
+  return `Who is actually good (${d})\n`+ranked.map(line).join('\n')
+    +(early.length?'\nToo early: '+early.map(r=>r.name+' '+fmtPct(r.avg)).join(', '):'')
+    +`\nAverage move since each call, on the entry/targets each source published. Not advice.`}
+function boardCanvas(){
+  const {ranked,early}=callBoard();
+  const list=ranked.slice(0,12),W=1080,rowH=92,top=250,H=top+list.length*rowH+140;
+  const cv=document.createElement('canvas');cv.width=W;cv.height=H;const g=cv.getContext('2d');
+  g.fillStyle='#0E1114';g.fillRect(0,0,W,H);
+  const grad=g.createLinearGradient(0,0,W,0);grad.addColorStop(0,'#B3202F');grad.addColorStop(1,'#E8A323');
+  g.fillStyle=grad;g.fillRect(0,0,W,10);
+  g.fillStyle='#F3EDE2';g.font='700 54px sans-serif';g.fillText('Who is actually good?',50,100);
+  g.fillStyle='#9AA3AD';g.font='28px sans-serif';
+  const d=new Date().toLocaleDateString('en-IN',{day:'numeric',month:'short',year:'numeric',timeZone:'Asia/Kolkata'});
+  g.fillText('Diwali 2026 stock calls, scored on their own published prices · '+d,50,148);
+  g.fillText(calls.length+' calls · '+(ranked.length+early.length)+' analysts · avg move since each call',50,190);
+  const mx=Math.max(5,...list.map(r=>Math.abs(r.avg||0)));
+  list.forEach((r,i)=>{
+    const y=top+i*rowH;
+    g.fillStyle=i%2?'#14181D':'#171C22';g.fillRect(40,y,W-80,rowH-8);
+    g.fillStyle='#9AA3AD';g.font='700 34px sans-serif';g.fillText(String(i+1),60,y+54);
+    g.fillStyle='#F3EDE2';g.font='600 31px sans-serif';
+    let nm=r.name;while(g.measureText(nm).width>470&&nm.length>4)nm=nm.slice(0,-2);if(nm!==r.name)nm+='…';
+    g.fillText(nm,115,y+40);
+    g.fillStyle='#9AA3AD';g.font='22px sans-serif';
+    g.fillText(r.calls+' calls · '+(r.upPct==null?'n/a':r.upPct+'% in profit')+(r.W+r.L?' · '+r.W+' target, '+r.L+' SL':''),115,y+70);
+    const bw=Math.max(4,Math.abs(r.avg||0)/mx*170);
+    g.fillStyle=(r.avg||0)>=0?'#3FB27F':'#E5484D';g.fillRect(700,y+30,bw,16);
+    g.font='700 34px sans-serif';g.textAlign='right';g.fillText(fmtPct(r.avg),W-60,y+54);g.textAlign='left'});
+  g.fillStyle='#9AA3AD';g.font='22px sans-serif';
+  g.fillText('Small samples are shrunk toward zero. Most calls are only days old, so this is early.',50,H-74);
+  g.fillText('Arithmetic on published calls, not a recommendation. alekhyadas.github.io/alert-desk',50,H-40);
+  return cv}
+async function shareBoard(mode){
+  try{
+    const text=boardText();
+    if(mode==='copy'){await navigator.clipboard.writeText(text);toast('Copied, paste it anywhere');return}
+    const cv=boardCanvas();
+    const blob=await new Promise(r=>cv.toBlob(r,'image/png'));
+    const file=new File([blob],'influencer-scorecard.png',{type:'image/png'});
+    if(mode==='share'&&navigator.canShare&&navigator.canShare({files:[file]})){
+      await navigator.share({files:[file],text});return}
+    if(mode==='share'&&navigator.share){await navigator.share({text});return}
+    const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='influencer-scorecard.png';
+    document.body.appendChild(a);a.click();a.remove();toast('Image saved')
+  }catch(e){if(e&&e.name!=='AbortError')toast('Could not share: '+(e.message||e),true)}}
+// Newest additions, always visible, so a fresh batch never hides inside a
+// collapsed analyst group on a phone.
+function callsNewHTML(){
+  const dates=[...new Set(calls.map(c=>c.date_added).filter(Boolean))].sort().reverse();
+  if(!dates.length)return '';
+  const latest=dates[0],fresh=calls.filter(c=>c.date_added===latest);
+  if(fresh.length===calls.length)return '';
+  const chips=fresh.slice(0,14).map(c=>callChipHTML(c)).join('');
+  return `<div class="card"><div class="sub" style="font-size:11.5px;letter-spacing:.05em;margin-bottom:8px">`
+    +`NEWLY ADDED ${cEsc(dayIST(latest).toUpperCase())} · ${fresh.length} CALL${fresh.length>1?'S':''}</div>`
+    +`<div class="cv-ctrl">${chips}</div>`
+    +(fresh.length>14?`<div class="sub" style="font-size:11px;margin-top:6px">+${fresh.length-14} more, open the All calls view</div>`:'')+`</div>`}
+
 // ---- controls ----
 function callsControlsHTML(){
   const views=[['analyst','By analyst'],['stock','By stock'],['all','All calls']];
@@ -2921,7 +3042,7 @@ function renderCalls(){
   if(!box)return;
   const note=`<div class="sub" style="font-size:12px;margin:0 2px 12px">Public buy calls by named analysts and influencers, `
     +`scored against the entry, target(s) and stop-loss <i>they</i> published. Arithmetic on their numbers, not a view of this dashboard's own.</div>`;
-  box.innerHTML=note+(calls.length?callsHeroHTML()+callsHighlightsHTML():'')
+  box.innerHTML=note+(calls.length?callsHeroHTML()+callsNewHTML()+callsBoardHTML()+callsHighlightsHTML():'')
     +callsControlsHTML()+'<div id="callsbody"></div>'+callsAddFormHTML();
   renderCallsBody()}
 async function reloadCalls(silent){
