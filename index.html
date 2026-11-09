@@ -2410,6 +2410,7 @@ async function loadAll(){
     const jf=await gh(`/repos/${own}/${rep}/contents/influencer_calls.json`);
     if(jf){const j=JSON.parse(b64dec(jf.content)||'{}');calls=j.calls||calls;callsUpdated=j.updated||''}
   }catch(e){}
+  await loadHistory(own,rep);
   try{
     const cc=await gh(`/repos/${own}/${rep}/contents/influencer_calls.csv`);
     callsSha=cc?cc.sha:null;callsCSV=cc?b64dec(cc.content):CALLS_HEADER+'\n'
@@ -2932,6 +2933,76 @@ function callsNewHTML(){
     +`<div class="cv-ctrl">${chips}</div>`
     +(fresh.length>14?`<div class="sub" style="font-size:11px;margin-top:6px">+${fresh.length-14} more, open the All calls view</div>`:'')+`</div>`}
 
+// ---- historical track record: one portfolio per festival-year ----
+// festival_history.json is written by festival_history.py. Every festival of
+// every year is its own equal-weight portfolio, scored against the Nifty 50
+// over the same dates, so one 10x stock cannot hide four losers and four
+// losers cannot hide a 10x stock. A source is judged on its portfolios.
+let fhist=null;
+const fhSign=v=>v==null?'—':(v>=0?'+':'')+v.toFixed(1)+'%';
+function fhPickRow(p){
+  if(p.error)return `<div class="sub" style="font-size:11.5px;padding:5px 0;border-top:1px solid var(--line)">${cEsc(p.ticker)} · no price history found</div>`;
+  const cell=(l,v)=>`<span style="min-width:62px;display:inline-block"><span class="sub" style="font-size:10px">${l}</span><br>`
+    +`<b style="color:${pctCol(v)};font-size:12.5px">${fhSign(v)}</b></span>`;
+  return `<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;padding:7px 0;border-top:1px solid var(--line)">`
+    +`<div style="width:104px"><b style="font-size:13px">${cEsc(p.ticker)}</b><div class="sub" style="font-size:10.5px">in ${fmt(p.entry)}</div></div>`
+    +cell('3 mo',p.m3)+cell('6 mo',p.m6)+cell('1 yr',p.y1)+cell('now',p.now)+cell('peak',p.peak)
+    +`<span class="sub" style="font-size:10.5px;min-width:80px">${p.targets&&p.targets.length?(p.t1_hit?'T1 hit '+dayIST(p.t1_hit):'T1 '+fmt(p.targets[0])+' not hit'):'no target'}</span></div>`}
+function fhPortfolioHTML(p){
+  const head=p.headline==='y1'?'1 year':'since pick';
+  const col=pctCol(p.alpha);
+  return `<details style="border-top:1px solid var(--line);padding:10px 0">`
+    +`<summary style="cursor:pointer;list-style:none;display:flex;gap:10px;align-items:center">`
+    +`<div style="flex:1;min-width:0"><div style="font-weight:600;font-size:14px">${cEsc(p.festival)} ${p.year}</div>`
+    +`<div class="sub" style="font-size:11px">${p.n_priced} of ${p.n} stocks · ${p.winners} up, ${p.losers} down (${head})`
+    +`${p.t1_possible?' · '+p.t1_hits+'/'+p.t1_possible+' hit first target':''}</div></div>`
+    +`<div style="text-align:right"><div style="font-size:18px;font-weight:700;color:${pctCol(p.ret)}">${fhSign(p.ret)}</div>`
+    +`<div style="font-size:11px;color:${col}">Nifty ${fhSign(p.nifty_ret)} · ${p.alpha==null?'—':(p.alpha>=0?'+':'')+p.alpha.toFixed(1)+' pts'}</div></div></summary>`
+    +`<div class="sub" style="font-size:11.5px;margin:8px 0 2px">`
+    +`${p.best?'Best '+cEsc(p.best.ticker)+' '+fhSign(p.best.ret):''}${p.worst_pick&&p.n_priced>1?' · Worst '+cEsc(p.worst_pick.ticker)+' '+fhSign(p.worst_pick.ret):''}`
+    +` · median stock ${fhSign(p.headline==='y1'?p.median_y1:p.median_now)} · picked ${dayIST(p.pick_date)} ${new Date(p.pick_date).getFullYear()}`
+    +`${p.source_url?' · <a href="'+cEsc(p.source_url)+'" target="_blank" rel="noopener">source</a>':''}</div>`
+    +p.picks.map(fhPickRow).join('')+`</details>`}
+function fhHTML(){
+  if(!fhist||!fhist.portfolios||!fhist.portfolios.length)return '';
+  const by=new Map();
+  fhist.portfolios.forEach(p=>{if(!by.has(p.influencer))by.set(p.influencer,[]);by.get(p.influencer).push(p)});
+  const roll=Object.fromEntries((fhist.influencers||[]).map(r=>[r.influencer,r]));
+  const blocks=[...by.entries()].map(([who,pfs])=>{
+    const r=roll[who]||{};
+    pfs.sort((a,b)=>b.pick_date.localeCompare(a.pick_date));
+    const verdict=r.matured?`Beat the Nifty in <b>${r.matured_beat_nifty} of ${r.matured}</b> fully-matured (1 year) portfolios, `
+      +`average ${fhSign(r.avg_matured_ret)} against the index by <b style="color:${pctCol(r.avg_matured_alpha)}">${r.avg_matured_alpha>=0?'+':''}${r.avg_matured_alpha} pts</b>.`
+      :'No portfolio has run a full year yet.';
+    return `<div style="padding:14px 0;border-top:1px solid var(--line)"><div style="font-weight:700;font-size:15px">${cEsc(who)}</div>`
+      +`<div class="sub" style="font-size:12px;margin:3px 0 4px">${r.portfolios||pfs.length} festival portfolios. ${verdict}</div>`
+      +pfs.map(fhPortfolioHTML).join('')+`</div>`}).join('');
+  return `<div class="card" style="padding:16px 18px">`
+    +`<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap"><div style="flex:1;min-width:200px">`
+    +`<div class="sub" style="font-size:11.5px;letter-spacing:.05em">TRACK RECORD BY FESTIVAL (HISTORICAL)</div>`
+    +`<div class="sub" style="font-size:11.5px;margin-top:2px">Each festival of each year is its own equal-weight portfolio, scored against the Nifty 50 `
+    +`over the same dates. Judge a source on its portfolios, not on one stock. Entry is the close on the pick date; `
+    +`updated ${cEsc(fhist.updated||'')}.</div></div>`
+    +`<div class="cv-ctrl"><button class="small" onclick="shareHistory('share')">Share</button>`
+    +`<button class="small" onclick="shareHistory('copy')">Copy text</button></div></div>${blocks}</div>`}
+function historyText(){
+  if(!fhist)return '';
+  const lines=[];
+  (fhist.influencers||[]).forEach(r=>{
+    lines.push(`${r.influencer}: ${r.portfolios} festival portfolios`+(r.matured?`, beat Nifty in ${r.matured_beat_nifty} of ${r.matured} matured, avg alpha ${r.avg_matured_alpha} pts`:''));
+    fhist.portfolios.filter(p=>p.influencer===r.influencer).sort((a,b)=>b.pick_date.localeCompare(a.pick_date)).forEach(p=>
+      lines.push(`  ${p.festival} ${p.year}: ${fhSign(p.ret)} vs Nifty ${fhSign(p.nifty_ret)} (${p.winners} up / ${p.losers} down${p.matured?', 1yr':', since pick'})`))});
+  return 'Festival picks track record\n'+lines.join('\n')+'\nEqual-weight portfolio per festival-year vs Nifty 50, entry = close on pick date. Not advice.'}
+async function shareHistory(mode){
+  try{
+    const text=historyText();
+    if(mode==='share'&&navigator.share){await navigator.share({text});return}
+    await navigator.clipboard.writeText(text);toast('Copied, paste it anywhere')
+  }catch(e){if(e&&e.name!=='AbortError')toast('Could not share: '+(e.message||e),true)}}
+async function loadHistory(own,rep){
+  try{const f=await gh(`/repos/${own}/${rep}/contents/festival_history.json`);
+    fhist=f?JSON.parse(b64dec(f.content)):null}catch(e){fhist=null}}
+
 // ---- controls ----
 function callsControlsHTML(){
   const views=[['analyst','By analyst'],['stock','By stock'],['all','All calls']];
@@ -3042,7 +3113,7 @@ function renderCalls(){
   if(!box)return;
   const note=`<div class="sub" style="font-size:12px;margin:0 2px 12px">Public buy calls by named analysts and influencers, `
     +`scored against the entry, target(s) and stop-loss <i>they</i> published. Arithmetic on their numbers, not a view of this dashboard's own.</div>`;
-  box.innerHTML=note+(calls.length?callsHeroHTML()+callsNewHTML()+callsBoardHTML()+callsHighlightsHTML():'')
+  box.innerHTML=note+(calls.length?callsHeroHTML()+callsNewHTML()+callsBoardHTML()+fhHTML()+callsHighlightsHTML():'')
     +callsControlsHTML()+'<div id="callsbody"></div>'+callsAddFormHTML();
   renderCallsBody()}
 async function reloadCalls(silent){
@@ -3050,6 +3121,7 @@ async function reloadCalls(silent){
   try{
     const jf=await gh(`/repos/${cfg.owner}/${cfg.repo}/contents/influencer_calls.json`);
     if(jf){const j=JSON.parse(b64dec(jf.content)||'{}');calls=j.calls||calls;callsUpdated=j.updated||''}
+    await loadHistory(cfg.owner,cfg.repo);
     if(callsMode)renderCalls();
     if(!silent)toast('Calls refreshed')
   }catch(e){if(!silent)toast('Could not refresh: '+e.message,true)}}
