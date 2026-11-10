@@ -2690,10 +2690,28 @@ function dayIST(s){
   const d=new Date(String(s)+'T00:00:00+05:30');
   return isNaN(d.getTime())?String(s||''):d.toLocaleDateString('en-IN',{day:'numeric',month:'short'})}
 
+// ---- festival lists ----
+// Every festival list is its own list, never blended with another year:
+// "Diwali 2026" and "Diwali 2025" are separate. The festival is read from the
+// source/horizon/note text (or an explicit `festival` column if a row has
+// one) and the year from the day the call was added.
+const FESTIVALS=[['Diwali',/diwali|deepavali|muhurat|muhurta|samvat|dhanteras/i],
+  ['Independence Day',/independence\s*day|15\s*aug/i],['Republic Day',/republic\s*day/i],
+  ['Holi',/\bholi\b/i],['Akshaya Tritiya',/akshaya\s*tritiya/i],['Navratri',/navratri/i]];
+function callFestival(c){
+  if(c.festival)return String(c.festival);
+  const t=[c.source,c.horizon,c.note].filter(Boolean).join(' ');
+  const f=FESTIVALS.find(([,re])=>re.test(t));
+  if(!f)return null;
+  const y=String(c.date_added||'').slice(0,4);
+  return f[0]+(y?' '+y:'')}
+let callsFest='';
+function setCallsFest(v){callsFest=(callsFest===v?'':v);callsLimit=40;renderCalls()}
 function callsFiltered(){
   const q=callsSearch.trim().toLowerCase();
   return calls.filter(c=>{
     if(!callMatchesFilter(c))return false;
+    if(callsFest){const f=callFestival(c);if(!f||f.indexOf(callsFest)!==0)return false}
     if(!q)return true;
     return [c.ticker,c.influencer,c.source,c.horizon,c.note,c.sebi_reg]
       .filter(Boolean).join(' ').toLowerCase().includes(q)})}
@@ -3061,7 +3079,8 @@ function callsControlsHTML(){
     +`<div class="cv-seg">${views.map(([k,l])=>`<div class="${callsView===k?'on':''}" onclick="setCallsView('${k}')">${l}</div>`).join('')}</div>`
     +`<select style="width:auto" onchange="setCallsSort(this.value)">`
     +sorts.map(([k,l])=>`<option value="${k}"${callsSort===k?' selected':''}>${l}</option>`).join('')+`</select></div>`
-    +`<div class="cv-ctrl">${filters.map(([k,l])=>`<div class="tab${callsFilterStatus===k?' on':''}" onclick="setCallsFilter('${k}')">${l}</div>`).join('')}</div></div>`}
+    +`<div class="cv-ctrl">${filters.map(([k,l])=>`<div class="tab${callsFilterStatus===k?' on':''}" onclick="setCallsFilter('${k}')">${l}</div>`).join('')}`
+    +`<div class="tab${callsFest==='Diwali'?' on':''}" onclick="setCallsFest('Diwali')" title="Only calls from Diwali / Muhurat / Samvat lists">\u{1FA94} Diwali</div></div></div>`}
 
 // ---- the three views ----
 function callGroupHeadHTML(key,title,subtitle,avg,w,l,o,open){
@@ -3154,13 +3173,81 @@ function callsAddFormHTML(){
     +`<button style="margin-top:10px" onclick="addCall()">Stage call</button> `
     +`<button style="margin-top:10px" onclick="saveCalls()"${callsDirty?'':' disabled'} id="cl-save">Save to GitHub</button>`
     +`</div></details>`}
+// ---- HOW HAVE THEIR FESTIVAL PICKS REALLY DONE? (last block on the page) ----
+const medianOf=a=>{if(!a.length)return null;const s=[...a].sort((x,y)=>x-y),m=s.length>>1;
+  return s.length%2?s[m]:(s[m-1]+s[m])/2};
+function stampIST(d){
+  return d.toLocaleString('sv-SE',{timeZone:'Asia/Kolkata'}).slice(0,16)}
+function festivalLists(){
+  const by=new Map();
+  calls.forEach(c=>{const f=callFestival(c);if(!f)return;
+    if(!by.has(f))by.set(f,[]);by.get(f).push(c)});
+  return [...by.entries()].map(([name,rows])=>{
+    const pcts=rows.map(pctOf).filter(x=>x!=null);
+    const dates=rows.map(c=>c.date_added).filter(Boolean).sort();
+    const first=dates[0]?new Date(dates[0]+'T00:00:00+05:30'):null;
+    const w=rows.filter(isWin).length,l=rows.filter(isLoss).length;
+    const priced=rows.filter(c=>pctOf(c)!=null).sort((a,b)=>pctOf(b)-pctOf(a));
+    const who=new Map();
+    rows.forEach(c=>{const k=c.influencer||'Unknown';if(!who.has(k))who.set(k,[]);who.get(k).push(c)});
+    return {name,rows,n:rows.length,pcts,avg:avgPct(rows),med:medianOf(pcts),
+      up:pcts.filter(p=>p>0).length,w,l,o:rows.length-w-l,
+      days:first?Math.max(0,Math.floor((Date.now()-first.getTime())/864e5)):null,
+      best:priced[0],worst:priced[priced.length-1],
+      who:[...who.entries()].map(([k,m])=>({k,n:m.length,avg:avgPct(m),
+        w:m.filter(isWin).length,l:m.filter(isLoss).length}))
+        .sort((a,b)=>(b.avg==null?-999:b.avg)-(a.avg==null?-999:a.avg))}})
+    .sort((a,b)=>(b.name.match(/\d{4}/)||[0])[0]-(a.name.match(/\d{4}/)||[0])[0]||a.name.localeCompare(b.name))}
+function festivalCardHTML(f,open){
+  const tot=f.n||1;
+  const seg=(k,col)=>k?`<div style="width:${k/tot*100}%;background:${col}"></div>`:'';
+  const early=f.days!=null&&f.days<30;
+  const unp=f.n-f.pcts.length;
+  const pick=(c,lab)=>c?`<span class="cv-chip" onclick="jumpToCall('${cEsc(c.ticker).replace(/'/g,'')}')"><span class="sub">${lab}</span>`
+    +`<b>${cEsc(c.ticker)}</b><b style="color:${pctCol(pctOf(c))}">${fmtPct(pctOf(c))}</b>`
+    +`<span class="sub">${cEsc(cShort(c.influencer))}</span></span>`:'';
+  const stat=(v,l,col)=>`<div><div style="font-size:17px;font-weight:700;${col?'color:'+col:''}">${v}</div>`
+    +`<div class="sub" style="font-size:10.5px">${l}</div></div>`;
+  const resolved=f.w+f.l;
+  return `<details class="card" style="padding:14px 16px"${open?' open':''}>`
+    +`<summary style="cursor:pointer;list-style:none;display:flex;gap:14px;align-items:center;flex-wrap:wrap;justify-content:space-between">`
+    +`<div><div style="font-weight:700;font-size:15px">\u{1FA94} ${cEsc(f.name)} list</div>`
+    +`<div class="sub" style="font-size:11px">${f.n} picks · ${f.who.length} analyst${f.who.length>1?'s':''}`
+    +`${f.days!=null?' · tracked '+f.days+' day'+(f.days===1?'':'s'):''}${unp?' · '+unp+' not priced yet':''}</div></div>`
+    +`<div style="text-align:right"><div style="font-size:26px;font-weight:700;color:${pctCol(f.avg)}">${fmtPct(f.avg)}</div>`
+    +`<div class="sub" style="font-size:10.5px">average pick, at today's price</div></div></summary>`
+    +`<div style="display:flex;height:6px;border-radius:3px;overflow:hidden;margin:12px 0 10px;background:var(--line)">`
+    +seg(f.w,'var(--armed)')+seg(f.l,'var(--crimson)')+seg(f.o,'var(--muted)')+`</div>`
+    +`<div style="display:flex;gap:22px;flex-wrap:wrap;margin-bottom:10px">`
+    +stat(f.pcts.length?f.up+' of '+f.pcts.length:'—','picks above their entry',f.pcts.length&&f.up/f.pcts.length>=.5?'var(--armed)':'var(--crimson)')
+    +stat(fmtPct(f.med),'typical pick (median)',pctCol(f.med))
+    +stat(resolved?Math.round(f.w/resolved*100)+'%':'—',resolved?'of '+resolved+' resolved hit target first':'no target or stop-loss hit yet')
+    +stat(f.w+'\u{1F3AF} &nbsp;'+f.l+'⛔ &nbsp;'+f.o+'○','target · stop-loss · open')+`</div>`
+    +`<div class="cv-ctrl" style="margin-bottom:10px">${pick(f.best,'best')}${f.worst&&f.worst!==f.best?pick(f.worst,'worst'):''}</div>`
+    +`<div style="border-top:1px solid var(--line)">`
+    +f.who.map(a=>`<div style="display:flex;justify-content:space-between;gap:10px;padding:7px 2px;border-bottom:1px solid var(--line);font-size:12.5px">`
+      +`<span>${cEsc(cShort(a.k))} <span class="sub">· ${a.n} pick${a.n>1?'s':''}${a.w||a.l?' · '+a.w+'\u{1F3AF} '+a.l+'⛔':''}</span></span>`
+      +`<b style="color:${pctCol(a.avg)}">${fmtPct(a.avg)}</b></div>`).join('')+`</div>`
+    +(early?`<div class="sub" style="font-size:11px;margin-top:8px;color:var(--fired)">⚠ Only ${f.days} day${f.days===1?'':'s'} since this list went out. Too early to call it good or bad: most of these are 12-month calls.</div>`:'')
+    +`</details>`}
+function festivalSectionHTML(){
+  const lists=festivalLists();
+  let d=parseIST(callsUpdated);
+  if(!d){const ds=calls.map(c=>parseIST(c.priced_at)).filter(Boolean);
+    if(ds.length)d=new Date(Math.max(...ds.map(x=>x.getTime())))}
+  const head=`<div style="margin:18px 2px 10px"><div style="font-size:13px;font-weight:700;letter-spacing:.03em">LISTS STILL RUNNING, SO FAR</div>`
+    +`<div class="sub" style="font-size:12px;margin-top:4px;max-width:720px">Each festival list on its own, at today's price, from the calls tracked above.`
+    +`${d?' Updated '+stampIST(d)+'.':''}</div></div>`;
+  if(!lists.length)return head+`<div class="card sub">No festival lists tracked yet. A call joins one when its source or horizon mentions Diwali, Muhurat, Samvat or another festival.</div>`;
+  return head+lists.map((f,i)=>festivalCardHTML(f,i===0)).join('')}
 function renderCalls(){
   const box=$('callsview');
   if(!box)return;
   const note=`<div class="sub" style="font-size:12px;margin:0 2px 12px">Public buy calls by named analysts and influencers, `
     +`scored against the entry, target(s) and stop-loss <i>they</i> published. Arithmetic on their numbers, not a view of this dashboard's own.</div>`;
-  box.innerHTML=note+(calls.length?callsHeroHTML()+callsNewHTML()+callsBoardHTML()+fhHTML()+callsHighlightsHTML():'')
-    +callsControlsHTML()+'<div id="callsbody"></div>'+callsAddFormHTML();
+  box.innerHTML=note+(calls.length?callsHeroHTML()+callsNewHTML()+callsBoardHTML()+callsHighlightsHTML():'')
+    +callsControlsHTML()+'<div id="callsbody"></div>'+callsAddFormHTML()
+    +(calls.length?fhHTML()+festivalSectionHTML():'');
   renderCallsBody()}
 async function reloadCalls(silent){
   if(callsDirty||!cfg||!cfg.token)return;
