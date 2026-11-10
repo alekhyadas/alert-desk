@@ -2969,7 +2969,7 @@ function fhVerdict(alpha){
   if(Math.abs(alpha)<1)return['About the same as the market','var(--muted)'];
   return alpha>0?['Beat the market by '+alpha.toFixed(1)+' points','var(--armed)']
     :['Worse than the market by '+Math.abs(alpha).toFixed(1)+' points','var(--crimson)']}
-function fhPickRow(p){
+function fhPickDetail(p){
   const row=(h,b)=>`<div style="margin-top:5px;font-size:12.5px;line-height:1.45"><span class="sub" style="font-size:11px;display:block">${h}</span>${b}</div>`;
   if(p.error){
     return `<div style="padding:12px 0;border-top:1px solid var(--line)"><b>${cEsc(p.ticker)}</b>`
@@ -2978,11 +2978,6 @@ function fhPickRow(p){
   const tg=p.targets||[],hits=p.hits||[];
   const reached=hits.filter(Boolean).length;
   const downNow=p.now!=null&&p.now<0;
-  let badge,bc;
-  if(p.sl_hit){badge='⛔ Fell to the stop-loss';bc='var(--crimson)'}
-  else if(reached){badge='\u{1F3AF} Target reached';bc='var(--armed)'}
-  else if(downNow){badge='\u{1F4C9} Below the recommended price';bc='var(--crimson)'}
-  else{badge='⏳ Target not reached yet';bc='var(--paused)'}
   let tline='No target was published.';
   if(tg.length){
     tline='Target: '+tg.map(fhRs).join(' / ')+'. ';
@@ -2997,58 +2992,81 @@ function fhPickRow(p){
       :`${fhRs(p.stop_loss)}. The price has never touched it.`)
     :`None was published. For reference, the lowest it ever fell was ${fhRs(p.low_price)} (${fhSign(p.worst)} from the recommended price).`;
   const trend=p.chg_1m==null?'':(p.chg_1m>=0?'Rising':'Falling')+` over the last month (${fhSign(p.chg_1m)}).`;
-  return `<div style="padding:12px 0;border-top:1px solid var(--line)">`
-    +`<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><b style="font-size:14px">${cEsc(p.ticker)}</b>`
-    +`<span class="pill" style="color:${bc};border-color:${bc};padding:2px 8px;font-size:11px">${badge}</span></div>`
+  return `<div style="padding:2px 0 10px 4px">`
     +row('WHEN RECOMMENDED',`Price then: <b>${fhRs(p.entry)}</b> on ${fhDay(p.entry_date)}.`)
     +row('TARGET',tline)
     +row('PRICE NOW',`<b>${fhRs(p.last)}</b>, <b style="color:${fhCol(p.now)}">${p.now==null?'—':(p.now>=0?'up ':'down ')+Math.abs(p.now).toFixed(1)+'%'}</b> since the recommendation. `
       +(p.now==null?'':p.now>=0?'Better than when recommended. ':'Worse than when recommended. ')+trend)
     +row('HIGHEST IT EVER WENT',`${fhRs(p.peak_price)} (${fhSign(p.peak)} from the recommended price)`)
     +row('STOP-LOSS',sl)+`</div>`}
-function fhPortfolioHTML(p){
+function fhBadge(p){
+  const reached=(p.hits||[]).filter(Boolean).length;
+  if(p.sl_hit)return['⛔','Hit stop-loss','var(--crimson)'];
+  if(reached)return['\u{1F3AF}','Target hit','var(--armed)'];
+  if(p.now!=null&&p.now<0)return['\u{1F4C9}','Below entry','var(--crimson)'];
+  return['⏳','Waiting','var(--muted)']}
+function fhPickRow(p){
+  if(p.error)return fhPickDetail(p);
+  const [ic,lab,col]=fhBadge(p);
+  return `<details style="border-top:1px solid var(--line)"><summary style="cursor:pointer;list-style:none;display:grid;`
+    +`grid-template-columns:minmax(80px,1fr) auto auto 64px;gap:10px;align-items:center;padding:8px 2px;font-size:12.5px">`
+    +`<b>${cEsc(p.ticker)}</b><span style="color:${col};font-size:11.5px">${ic} ${lab}</span>`
+    +`<span class="sub" style="font-size:11.5px">${fhRs(p.entry)} → ${fhRs(p.last)}</span>`
+    +`<b style="text-align:right;color:${fhCol(p.now)}">${fhSign(p.now)}</b></summary>${fhPickDetail(p)}</details>`}
+function fhPortfolioHTML(p,scale){
   const [vt,vc]=fhVerdict(p.alpha);
-  const when=p.headline==='y1'?'after 1 year':'so far (not a full year yet)';
-  return `<details style="border-top:1px solid var(--line);padding:12px 0">`
-    +`<summary style="cursor:pointer;list-style:none">`
-    +`<div style="display:flex;gap:10px;align-items:flex-start"><div style="flex:1;min-width:0">`
-    +`<div style="font-weight:700;font-size:15px">${cEsc(p.festival)} ${p.year} list</div>`
-    +`<div class="sub" style="font-size:11.5px">Recommended ${fhDay(p.pick_date)} · ${p.n} stock${p.n>1?'s':''}`
-    +`${p.n_priced<p.n?' ('+p.n_priced+' with prices)':''}. Tap to see each stock.</div></div>`
-    +`<div style="text-align:right"><div style="font-size:20px;font-weight:700;color:${fhCol(p.ret)}">${fhSign(p.ret)}</div>`
-    +`<div class="sub" style="font-size:10.5px">average ${when}</div></div></div>`
-    +`<div style="font-size:12.5px;margin-top:6px"><span style="color:${vc}"><b>${vt}</b></span> `
-    +`<span class="sub">(the Nifty market index did ${fhSign(p.nifty_ret)} over the same dates)</span></div>`
-    +`<div class="sub" style="font-size:11.5px;margin-top:3px">${p.winners} stock${p.winners===1?'':'s'} up, ${p.losers} down`
-    +`${p.t1_possible?'. '+p.t1_hits+' of '+p.t1_possible+' reached the first target at some point':''}.`
-    +`${p.best&&p.n_priced>1?' Best: '+cEsc(p.best.ticker)+' '+fhSign(p.best.ret)+'. Worst: '+cEsc(p.worst_pick.ticker)+' '+fhSign(p.worst_pick.ret)+'.':''}</div>`
-    +`</summary>`
-    +`${p.source_url?`<div class="sub" style="font-size:11px;margin:8px 0 0"><a href="${cEsc(p.source_url)}" target="_blank" rel="noopener">Where he said it</a></div>`:''}`
+  const y1=p.headline==='y1';
+  const half=v=>Math.min(50,Math.abs(v||0)/scale*50);
+  const bar=(v,h,col)=>v==null?'':`<div style="position:absolute;height:${h}px;${v>=0?'left:50%':'right:50%'};width:${half(v)}%;background:${col};border-radius:2px"></div>`;
+  const ahead=p.alpha==null?'':Math.abs(p.alpha)<1?'≈ market':(p.alpha>0?'▲ ':'▼ ')+Math.abs(p.alpha).toFixed(1)+' pts';
+  return `<details style="border-top:1px solid var(--line)">`
+    +`<summary style="cursor:pointer;list-style:none;display:grid;grid-template-columns:minmax(120px,170px) 1fr 88px;gap:12px;align-items:center;padding:11px 2px">`
+    +`<div><div style="font-weight:700;font-size:13.5px">${cEsc(p.festival)} ${p.year}`
+    +` <span class="pill" style="font-size:9.5px;padding:0 6px;color:var(--muted)">${y1?'1 YEAR':'SO FAR'}</span></div>`
+    +`<div class="sub" style="font-size:10.5px">${fhDay(p.pick_date)} · ${p.n} stock${p.n>1?'s':''} · <span style="color:var(--armed)">${p.winners}↑</span> <span style="color:var(--crimson)">${p.losers}↓</span></div></div>`
+    +`<div style="position:relative;height:22px"><div style="position:absolute;left:50%;top:0;bottom:0;width:1px;background:var(--line)"></div>`
+    +`<div style="position:absolute;inset:0;top:3px">${bar(p.ret,10,fhCol(p.ret))}</div>`
+    +`<div style="position:absolute;inset:0;top:15px">${bar(p.nifty_ret,4,'var(--muted)')}</div></div>`
+    +`<div style="text-align:right"><div style="font-size:16px;font-weight:700;color:${fhCol(p.ret)}">${fhSign(p.ret)}</div>`
+    +`<div style="font-size:10.5px;color:${vc}" title="${cEsc(vt)}. Nifty did ${fhSign(p.nifty_ret)}">${ahead}</div></div></summary>`
+    +`<div class="sub" style="font-size:11px;padding:0 2px 8px">Market (Nifty) did ${fhSign(p.nifty_ret)} over the same dates. `
+    +`${p.t1_possible?p.t1_hits+' of '+p.t1_possible+' reached the first target. ':''}`
+    +`${p.source_url?`<a href="${cEsc(p.source_url)}" target="_blank" rel="noopener">Source</a>`:''}</div>`
     +p.picks.map(fhPickRow).join('')+`</details>`}
 function fhHTML(){
   if(!fhist||!fhist.portfolios||!fhist.portfolios.length)return '';
   const by=new Map();
   fhist.portfolios.forEach(p=>{if(!by.has(p.influencer))by.set(p.influencer,[]);by.get(p.influencer).push(p)});
   const roll=Object.fromEntries((fhist.influencers||[]).map(r=>[r.influencer,r]));
-  const blocks=[...by.entries()].sort((a,b)=>b[1].length-a[1].length).map(([who,pfs])=>{
+  const allRolls=Object.values(roll);
+  const M=allRolls.reduce((a,r)=>a+(r.matured||0),0),B=allRolls.reduce((a,r)=>a+(r.matured_beat_nifty||0),0);
+  const strip=`<div style="display:flex;gap:26px;flex-wrap:wrap;margin:14px 0 4px">`
+    +`<div><div style="font-size:28px;font-weight:700;line-height:1">${fhist.portfolios.length}</div><div class="sub" style="font-size:10.5px">festival lists</div></div>`
+    +`<div><div style="font-size:28px;font-weight:700;line-height:1">${by.size}</div><div class="sub" style="font-size:10.5px">sources</div></div>`
+    +(M?`<div><div style="font-size:28px;font-weight:700;line-height:1;color:${B/M>=.5?'var(--armed)':'var(--crimson)'}">${B} of ${M}</div>`
+      +`<div class="sub" style="font-size:10.5px">year-old lists beat the market</div></div>`:'')+`</div>`
+    +`<div class="sub" style="font-size:10.5px;display:flex;gap:14px;flex-wrap:wrap;margin:6px 0 2px"><span><i style="display:inline-block;width:14px;height:7px;background:var(--armed);border-radius:2px"></i> the list</span>`
+    +`<span><i style="display:inline-block;width:14px;height:4px;background:var(--muted);border-radius:2px"></i> Nifty, same dates</span><span>tap a row for its stocks</span></div>`;
+  const blocks=[...by.entries()].sort((a,b)=>b[1].length-a[1].length).map(([who,pfs],i)=>{
     const r=roll[who]||{};
     pfs.sort((a,b)=>b.pick_date.localeCompare(a.pick_date));
-    const verdict=r.portfolios===1&&!r.matured?'One list so far, too early to judge.'
-      :r.matured
-      ?`Of ${r.portfolios} festival list${r.portfolios>1?'s':''}, ${r.matured} ${r.matured>1?'are':'is'} at least a year old. ${r.matured>1?'Those '+r.matured+' averaged':'It returned'} `
-        +`<b style="color:${fhCol(r.avg_matured_ret)}">${fhSign(r.avg_matured_ret)}</b> after a year, while the market did <b>${fhSign(r.avg_matured_nifty)}</b> `
-        +`over the same dates. <b>${r.matured>1?'Only ':''}${r.matured_beat_nifty} of ${r.matured}</b> beat the market.`
-      :'None of his lists has run a full year yet.';
-    return `<div style="padding:14px 0;border-top:1px solid var(--line)"><div style="font-weight:700;font-size:16px">${cEsc(who)}</div>`
-      +`<div style="font-size:12.5px;margin:4px 0 4px;line-height:1.5">${verdict}</div>`
-      +pfs.map(fhPortfolioHTML).join('')+`</div>`}).join('');
+    const scale=Math.max(20,...pfs.map(p=>Math.max(Math.abs(p.ret||0),Math.abs(p.nifty_ret||0))));
+    const score=r.matured
+      ?`<div style="text-align:right"><div style="font-size:22px;font-weight:700;color:${r.matured_beat_nifty/r.matured>=.5?'var(--armed)':'var(--crimson)'}">${r.matured_beat_nifty}/${r.matured}</div>`
+        +`<div class="sub" style="font-size:10.5px">beat the market after 1 yr</div>`
+        +`<div style="font-size:11px"><b style="color:${fhCol(r.avg_matured_ret)}">${fhSign(r.avg_matured_ret)}</b> <span class="sub">vs ${fhSign(r.avg_matured_nifty)}</span></div></div>`
+      :`<div class="sub" style="font-size:11px;text-align:right">Too early:<br>no list is a year old</div>`;
+    return `<details style="border-top:1px solid var(--line);margin-top:10px"${i===0?' open':''}>`
+      +`<summary style="cursor:pointer;list-style:none;display:flex;justify-content:space-between;gap:12px;align-items:center;padding:12px 0">`
+      +`<div><div style="font-weight:700;font-size:16px">${cEsc(who)}</div><div class="sub" style="font-size:11px">${pfs.length} festival list${pfs.length>1?'s':''}</div></div>${score}</summary>`
+      +pfs.map(p=>fhPortfolioHTML(p,scale)).join('')+`</details>`}).join('');
   return `<div class="card" style="padding:16px 18px">`
     +`<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap"><div style="flex:1;min-width:200px">`
-    +`<div class="sub" style="font-size:11.5px;letter-spacing:.05em">HOW HAVE THEIR FESTIVAL PICKS REALLY DONE?</div>`
+    +`<div style="font-size:15px;font-weight:700;letter-spacing:.03em">HOW HAVE THEIR FESTIVAL PICKS REALLY DONE?</div>`
     +`<div class="sub" style="font-size:11.5px;margin-top:2px;line-height:1.5">Every Diwali or Independence Day list is judged on its own, never mixed with another year. `
     +`Numbers use today's price, not the highest price a stock once touched. Updated ${cEsc(fhist.updated||'')}.</div></div>`
     +`<div class="cv-ctrl"><button class="small" onclick="shareHistory('share')">Share</button>`
-    +`<button class="small" onclick="shareHistory('copy')">Copy text</button></div></div>${blocks}</div>`}
+    +`<button class="small" onclick="shareHistory('copy')">Copy text</button></div></div>${strip}${blocks}</div>`}
 function historyText(){
   if(!fhist)return '';
   const lines=[];
