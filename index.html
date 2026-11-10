@@ -3012,13 +3012,14 @@ function fhHTML(){
   const by=new Map();
   fhist.portfolios.forEach(p=>{if(!by.has(p.influencer))by.set(p.influencer,[]);by.get(p.influencer).push(p)});
   const roll=Object.fromEntries((fhist.influencers||[]).map(r=>[r.influencer,r]));
-  const blocks=[...by.entries()].map(([who,pfs])=>{
+  const blocks=[...by.entries()].sort((a,b)=>b[1].length-a[1].length).map(([who,pfs])=>{
     const r=roll[who]||{};
     pfs.sort((a,b)=>b.pick_date.localeCompare(a.pick_date));
-    const verdict=r.matured
-      ?`Of his ${r.portfolios} festival lists, ${r.matured} are at least a year old. Those ${r.matured} averaged `
+    const verdict=r.portfolios===1&&!r.matured?'One list so far, too early to judge.'
+      :r.matured
+      ?`Of ${r.portfolios} festival list${r.portfolios>1?'s':''}, ${r.matured} ${r.matured>1?'are':'is'} at least a year old. ${r.matured>1?'Those '+r.matured+' averaged':'It returned'} `
         +`<b style="color:${fhCol(r.avg_matured_ret)}">${fhSign(r.avg_matured_ret)}</b> after a year, while the market did <b>${fhSign(r.avg_matured_nifty)}</b> `
-        +`over the same dates. <b>Only ${r.matured_beat_nifty} of ${r.matured}</b> beat the market.`
+        +`over the same dates. <b>${r.matured>1?'Only ':''}${r.matured_beat_nifty} of ${r.matured}</b> beat the market.`
       :'None of his lists has run a full year yet.';
     return `<div style="padding:14px 0;border-top:1px solid var(--line)"><div style="font-weight:700;font-size:16px">${cEsc(who)}</div>`
       +`<div style="font-size:12.5px;margin:4px 0 4px;line-height:1.5">${verdict}</div>`
