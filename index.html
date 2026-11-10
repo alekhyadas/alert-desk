@@ -1469,8 +1469,22 @@ function renderMonth(){
 // --- News -----------------------------------------------------------------
 // research_watch already fetches and scores headlines for every holding and
 // writes them to research.json. Until now the dashboard never showed them.
-let newsFilterTk=null;
+let newsFilterTk=null, newsTone='';
 function newsFilterBy(tk){newsFilterTk=(newsFilterTk===tk)?null:tk;renderNews()}
+function setNewsTone(t){newsTone=(newsTone===t?'':t);renderNews()}
+// Every headline gets a tone. A signal the research workflow already matched
+// (order win, downgrade, regulatory action...) wins. Otherwise a plain word
+// count decides: more positive words than negative = positive, the reverse =
+// negative, a tie or no clue = neutral (mixed headlines are NOT forced into a
+// side). Word-matching is a rough guide, so those rows are marked "~".
+const NEWS_POS=/\b(rise[sn]?|rose|rising|jump(s|ed)?|surge[sd]?|soar(s|ed)?|gain(s|ed)?|rall(y|ies|ied)|record|beat(s)?|upgrade[sd]?|bullish|upside|outperform\w*|wins?|won|bags?|secures?|bagged|approval|approved|dividend|bonus|buyback|growth|strong|rebound(s|ed)?|boost\w*|expan\w+|profit rose|top pick|target raised|hires?|launch(es|ed)?|recommends? 'buy'|buy rating)\b/gi;
+const NEWS_NEG=/\b(fall[s]?|fell|falling|drop(s|ped)?|slump\w*|plunge[sd]?|crash\w*|declin\w+|loss(es)?|downgrade[sd]?|bearish|miss(es|ed)?|weak\w*|probe|penalt\w+|fine[sd]?|fraud|default\w*|cut(s)?|slash\w*|tumble[sd]?|sink(s)?|sank|concern\w*|warn\w*|resign\w*|raid|ban(s|ned)?|lawsuit|sell-?off|selloff|lower|disappoint\w*|plummet\w*|tank(s|ed)?|trouble|risk)\b/gi;
+function headlineTone(title,dir){
+  if(dir==='good')return{t:'pos',guess:false};
+  if(dir==='bad')return{t:'neg',guess:false};
+  const s=String(title||'');
+  const p=(s.match(NEWS_POS)||[]).length,n=(s.match(NEWS_NEG)||[]).length;
+  return p>n?{t:'pos',guess:true}:n>p?{t:'neg',guess:true}:{t:'neu',guess:true}}
 
 function renderNews(){
   const L=$('list');
@@ -1495,10 +1509,14 @@ function renderNews(){
   // actually published, and it says so at the bottom. Only tickers with at
   // least one CLASSIFIED headline appear, so a quiet stock with three
   // unrelated headlines does not show as "0-0" clutter.
+  items.forEach(i=>{const x=headlineTone(i.title,i.dir);i.tone=x.t;i.guess=x.guess});
+  const nPos=items.filter(i=>i.tone==='pos').length,nNeg=items.filter(i=>i.tone==='neg').length,
+    nNeu=items.length-nPos-nNeg;
   const byTk={};
   items.forEach(i=>{
-    if(i.dir!=='good'&&i.dir!=='bad')return;
-    (byTk[i.tk]=byTk[i.tk]||{good:0,bad:0})[i.dir]++;
+    if(i.tone==='neu')return;
+    const k=i.tone==='pos'?'good':'bad';
+    (byTk[i.tk]=byTk[i.tk]||{good:0,bad:0})[k]++;
   });
   const tally=Object.entries(byTk).sort((a,b)=>
     (b[1].good+b[1].bad)-(a[1].good+a[1].bad));
@@ -1515,9 +1533,16 @@ function renderNews(){
       </span>`).join('')}
     </div></div>`:'';
 
-  const shown=newsFilterTk?items.filter(i=>i.tk===newsFilterTk):items;
+  const shown=items.filter(i=>(!newsFilterTk||i.tk===newsFilterTk)&&(!newsTone||i.tone===newsTone));
+  const TONE={pos:['POSITIVE','var(--armed)'],neg:['NEGATIVE','var(--crimson)'],neu:['NEUTRAL','var(--muted)']};
+  const toneBar=`<div class="card" style="padding:10px 16px;display:flex;gap:8px;flex-wrap:wrap;align-items:center">`
+    +[['','All',items.length,'var(--paper)'],['pos','▲ Positive',nPos,'var(--armed)'],
+      ['neg','▼ Negative',nNeg,'var(--crimson)'],['neu','Neutral',nNeu,'var(--muted)']]
+      .map(([k,l,n,c])=>`<span class="pchip" style="cursor:pointer;${newsTone===k?'border-color:'+c+';color:'+c:''}" onclick="setNewsTone('${k}')">${l} <b>${n}</b></span>`).join('')
+    +`<div style="flex:1;min-width:120px;display:flex;height:6px;border-radius:3px;overflow:hidden;background:var(--line)">`
+    +`<div style="width:${nPos/items.length*100}%;background:var(--armed)"></div><div style="width:${nNeg/items.length*100}%;background:var(--crimson)"></div></div></div>`;
 
-  L.innerHTML=tallyHtml
+  L.innerHTML=tallyHtml+toneBar
     + `<div class="card" style="padding:12px 16px">
       <b>${shown.length}${newsFilterTk?` for ${newsFilterTk}`:''} headline${shown.length===1?'':'s'}</b>
       <span class="sub">${newsFilterTk?`<a href="#" onclick="newsFilterBy('${newsFilterTk}');return false" style="color:var(--brand)">clear filter</a> \u00B7 `:''}across ${new Set(items.map(i=>i.tk)).size} holdings,
@@ -1526,17 +1551,17 @@ function renderNews(){
       <a class="card newsrow" href="${i.link||'#'}" ${i.link?'target="_blank" rel="noopener"':''}>
         <div style="display:flex;gap:10px;align-items:baseline;flex-wrap:wrap">
           <b style="font-family:'Bricolage Grotesque',sans-serif">${i.tk}</b>
+          <span class="ex" style="color:${TONE[i.tone][1]};border-color:${TONE[i.tone][1]};font-weight:700"${i.guess?' title="Judged from the words in the headline, so it is a rough guide"':''}>${TONE[i.tone][0]}${i.guess&&i.tone!=='neu'?' ~':''}</span>
           ${i.label?`<span class="ex" style="color:${tone(i.dir)};border-color:${tone(i.dir)}">${i.label}</span>`:''}
           <span class="sub" style="margin-left:auto;font-size:11.5px">${i.when||''}</span>
         </div>
         <div style="margin-top:5px;font-size:14px;line-height:1.45">${i.title}</div>
       </a>`).join('')
-    + (tally.length?`<div class="card sub" style="font-size:11px">This counts
-      headlines that matched a known signal (an order win, a downgrade, a
-      regulatory action and so on), not a judgement of the stock. Most
-      headlines match nothing and are not counted either way; a 0-0 stock
-      may still have real news, just none that matched a pattern this file
-      recognises.</div>`:'');
+    + `<div class="card sub" style="font-size:11px">POSITIVE / NEGATIVE says whether
+      the headline reads as good or bad news, not whether to buy or sell. Tags with
+      a ~ are judged from the words alone, so a mixed headline (for example
+      "profit rose but shares fell") is left NEUTRAL. Tags without ~ come from a
+      matched signal such as an order win, a downgrade or a regulatory action.</div>`;
 }
 
 // Slash to search, Escape to clear. Both are muscle memory from every other
@@ -2700,7 +2725,11 @@ const FESTIVALS=[['Diwali',/diwali|deepavali|muhurat|muhurta|samvat|dhanteras/i]
   ['Holi',/\bholi\b/i],['Akshaya Tritiya',/akshaya\s*tritiya/i],['Navratri',/navratri/i]];
 function callFestival(c){
   if(c.festival)return String(c.festival);
-  const t=[c.source,c.horizon,c.note].filter(Boolean).join(' ');
+  // Source and horizon decide. A note only counts when it opens with the
+  // festival ("Diwali Pick 4; ..."), so a note that merely mentions an earlier
+  // Diwali pick ("separate, later post from his 8 Nov Diwali pick") does not
+  // pull an ordinary call into the festival list.
+  const t=[c.source,c.horizon,/^\s*\w+(\s+\w+)?\s*pick/i.test(c.note||'')?c.note:''].filter(Boolean).join(' ');
   const f=FESTIVALS.find(([,re])=>re.test(t));
   if(!f)return null;
   const y=String(c.date_added||'').slice(0,4);
