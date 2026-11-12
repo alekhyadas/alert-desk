@@ -1883,7 +1883,7 @@ function renderConcalls(){
       +`<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">`
       +(c.status==='done'?`<button class="small" onclick="toggleCc('${id}','sum')">${open('sum')?'Hide summary':'AI summary'}</button>`:'')
       +(c.transcript?`<button class="small" onclick="toggleCc('${id}','tr')">${open('tr')?'Hide transcript':'Transcript'}</button>`:'')
-      +`<a class="small" style="padding:6px 10px;border:1px solid var(--line);border-radius:6px" href="${cEsc(c.url)}" target="_blank" rel="noopener">${c.kind==='transcript_pdf'?'Transcript PDF':'Listen'}</a>`
+      +`<a class="small" style="padding:6px 10px;border:1px solid var(--line);border-radius:6px" href="${cEsc(c.url)}" target="_blank" rel="noopener">${c.kind==='transcript_pdf'?'Transcript PDF':c.kind==='youtube'?'Watch':'Listen'}</a>`
       +(c.ppt_url?`<a class="small" style="padding:6px 10px;border:1px solid var(--line);border-radius:6px" href="${cEsc(c.ppt_url)}" target="_blank" rel="noopener">Presentation</a>`:'')+`</div>`
       +(open('sum')?ccSummaryHTML(s):'')
       +(open('tr')?`<div style="margin-top:12px;max-height:420px;overflow:auto;font-size:13px;line-height:1.65;white-space:pre-wrap;border-top:1px solid var(--line);padding-top:10px">${cEsc(c.transcript)}</div>`:'')
@@ -1895,7 +1895,7 @@ function renderConcalls(){
     +`<label>Quarter</label><input id="cc-q" placeholder="e.g. Q2 FY27">`
     +`<label>Link to the call audio (mp3, m4a, wav) or its transcript PDF</label><input id="cc-url" placeholder="https://…">`
     +`<label>Presentation link (optional)</label><input id="cc-ppt" placeholder="https://…">`
-    +`<div class="sub" style="font-size:11.5px;margin-top:8px;line-height:1.5">Use the link from the company's own investor page. bseindia.com and nseindia.com links are not accepted because they block automated downloads. YouTube links are not supported. Needs the free <b>GEMINI_API_KEY</b> added as a GitHub secret.</div>`
+    +`<div class="sub" style="font-size:11.5px;margin-top:8px;line-height:1.5">Use the link from the company's own investor page. bseindia.com and nseindia.com links are not accepted because they block automated downloads. A public YouTube link to the call works too. New calls for your stocks are also found automatically when the YOUTUBE_API_KEY secret is set. Needs the free <b>GEMINI_API_KEY</b> added as a GitHub secret.</div>`
     +`<button style="margin-top:10px" onclick="addConcall()"${ixCcBusy?' disabled':''}>${ixCcBusy?'Saving…':'Add and process'}</button></div></details>`;
   L.innerHTML=out}
 async function addConcall(){
