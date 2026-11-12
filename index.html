@@ -1837,6 +1837,87 @@ function renderFilings(){
       +`<div style="margin-top:5px;font-size:14px;line-height:1.45">${cEsc(f.title)}</div></a>`).join('')
     +`<div class="card sub" style="font-size:11px">Sorted by headline wording into types, so a concall write-up is easy to find. NSE and BSE block scripted access, so these are news-site write-ups and links, not the filings themselves.</div>`}
 
+// ---- Concalls: transcript and summary of a company's earnings call ----
+// concalls.csv lists the calls (the form below edits it on GitHub); the
+// "Concall desk" workflow turns each into a transcript and summary with free
+// Gemini and writes concalls.json. Links must be ones the company published.
+let concallData=null, ixCcFilter='all', ixCcOpen={}, ixCcBusy=false;
+async function loadConcalls(own,rep){
+  try{const f=await gh(`/repos/${own}/${rep}/contents/concalls.json`);
+    concallData=f?JSON.parse(b64dec(f.content)):null}catch(e){concallData=null}}
+function setCcFilter(f){ixCcFilter=f;renderConcalls()}
+function toggleCc(id,part){const k=decodeURIComponent(id)+'|'+part;ixCcOpen[k]=!ixCcOpen[k];renderConcalls()}
+const CC_TONE={confident:['Confident','var(--armed)'],cautious:['Cautious','var(--fired)'],mixed:['Mixed','var(--muted)']};
+function ccList(title,items){
+  items=(items||[]).filter(Boolean);
+  if(!items.length)return '';
+  return `<div style="margin-top:10px"><div class="sub" style="font-size:11px;letter-spacing:.05em">${title}</div>`
+    +items.map(i=>`<div style="font-size:13px;line-height:1.5;margin-top:3px">• ${cEsc(i)}</div>`).join('')+`</div>`}
+function ccSummaryHTML(s){
+  s=s||{};
+  return ccList('KEY NUMBERS',s.numbers)+ccList('GUIDANCE',s.guidance)+ccList('DEMAND',s.demand)
+    +ccList('MARGINS AND COSTS',s.margins_costs)+ccList('INVESTMENTS AND PLANS',s.capex_plans)+ccList('RISKS RAISED',s.risks)
+    +((s.qa||[]).length?`<div style="margin-top:10px"><div class="sub" style="font-size:11px;letter-spacing:.05em">ANALYST QUESTIONS</div>`
+      +s.qa.map(x=>`<div style="margin-top:6px;font-size:13px;line-height:1.5"><b>${cEsc(x.q||'')}</b><br><span class="sub">${cEsc(x.a||'')}</span></div>`).join('')+`</div>`:'')}
+function renderConcalls(){
+  const L=$('list');
+  const calls=(concallData&&concallData.calls)||[];
+  const held=new Set((alerts||[]).map(a=>String(a.ticker||'').toUpperCase()));
+  const n=k=>calls.filter(c=>k==='all'?true:k==='done'?c.status==='done':k==='wait'?(c.status==='queued'):(c.status==='failed'||c.status==='blocked')).length;
+  const show=calls.filter(c=>ixCcFilter==='all'?true:ixCcFilter==='done'?c.status==='done':ixCcFilter==='wait'?c.status==='queued':(c.status==='failed'||c.status==='blocked'));
+  const pill=c=>{const m={done:['Ready','var(--armed)'],queued:['Waiting','var(--fired)'],failed:['Failed','var(--crimson)'],blocked:['Link not allowed','var(--crimson)']}[c.status]||['?','var(--muted)'];
+    return `<span class="ex" style="color:${m[1]};border-color:${m[1]}">${m[0]}</span>`};
+  let out=(concallData?`<div class="sub" style="font-size:11px;margin:0 4px 8px">Updated ${cEsc(concallData.updated||'')} IST · transcribed and summarised by Google's free Gemini</div>`:'')
+    +`<div class="card" style="padding:10px 16px;display:flex;gap:8px;flex-wrap:wrap">`
+    +ixChip(ixCcFilter==='all',`All <b>${n('all')}</b>`,"setCcFilter('all')")+ixChip(ixCcFilter==='done',`Ready <b>${n('done')}</b>`,"setCcFilter('done')")
+    +ixChip(ixCcFilter==='wait',`Waiting <b>${n('wait')}</b>`,"setCcFilter('wait')")+ixChip(ixCcFilter==='bad',`Needs attention <b>${n('bad')}</b>`,"setCcFilter('bad')")+`</div>`;
+  out+=show.length?show.map(c=>{
+    const s=c.summary||{},tone=CC_TONE[s.tone],id=cEnc(c.id);
+    const open=p=>ixCcOpen[c.id+'|'+p];
+    return `<div class="card" style="padding:14px 16px"><div style="display:flex;gap:10px;align-items:baseline;flex-wrap:wrap">`
+      +`<b style="font-size:15px">${cEsc(c.ticker)}</b>${held.has(c.ticker)?'<span class="sub" style="font-size:10.5px">held</span>':''}`
+      +`<span class="sub" style="font-size:12px">${cEsc(c.quarter||'')} ${c.date?'· '+cEsc(ixDay(c.date)):''}</span>${pill(c)}`
+      +(tone?`<span class="ex" style="color:${tone[1]};border-color:${tone[1]}">${tone[0]} tone</span>`:'')+`</div>`
+      +(s.headline?`<div style="font-size:14px;line-height:1.5;margin-top:8px">${cEsc(s.headline)}</div>`:'')
+      +(c.error&&c.status!=='done'?`<div style="margin-top:8px;font-size:12.5px;color:${c.status==='queued'?'var(--fired)':'var(--crimson)'}">${cEsc(c.error)}</div>`:'')
+      +`<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">`
+      +(c.status==='done'?`<button class="small" onclick="toggleCc('${id}','sum')">${open('sum')?'Hide summary':'AI summary'}</button>`:'')
+      +(c.transcript?`<button class="small" onclick="toggleCc('${id}','tr')">${open('tr')?'Hide transcript':'Transcript'}</button>`:'')
+      +`<a class="small" style="padding:6px 10px;border:1px solid var(--line);border-radius:6px" href="${cEsc(c.url)}" target="_blank" rel="noopener">${c.kind==='transcript_pdf'?'Transcript PDF':'Listen'}</a>`
+      +(c.ppt_url?`<a class="small" style="padding:6px 10px;border:1px solid var(--line);border-radius:6px" href="${cEsc(c.ppt_url)}" target="_blank" rel="noopener">Presentation</a>`:'')+`</div>`
+      +(open('sum')?ccSummaryHTML(s):'')
+      +(open('tr')?`<div style="margin-top:12px;max-height:420px;overflow:auto;font-size:13px;line-height:1.65;white-space:pre-wrap;border-top:1px solid var(--line);padding-top:10px">${cEsc(c.transcript)}</div>`:'')
+      +`</div>`}).join('')
+    :`<div class="card"><div class="ttl">${calls.length?'Nothing in this filter':'No concalls added yet'}</div><p class="sub" style="margin-top:6px">Add a call below with a link its company published. The summary appears here a few minutes later.</p></div>`;
+  out+=`<details class="card"${calls.length?'':' open'}><summary style="font-size:14px;color:var(--paper);font-weight:600">➕ Add a concall</summary><div style="margin-top:8px">`
+    +`<label>Ticker</label><input id="cc-tk" placeholder="e.g. TATAPOWER">`
+    +`<label>Call date</label><input id="cc-dt" type="date">`
+    +`<label>Quarter</label><input id="cc-q" placeholder="e.g. Q2 FY27">`
+    +`<label>Link to the call audio (mp3, m4a, wav) or its transcript PDF</label><input id="cc-url" placeholder="https://…">`
+    +`<label>Presentation link (optional)</label><input id="cc-ppt" placeholder="https://…">`
+    +`<div class="sub" style="font-size:11.5px;margin-top:8px;line-height:1.5">Use the link from the company's own investor page. bseindia.com and nseindia.com links are not accepted because they block automated downloads. YouTube links are not supported. Needs the free <b>GEMINI_API_KEY</b> added as a GitHub secret.</div>`
+    +`<button style="margin-top:10px" onclick="addConcall()"${ixCcBusy?' disabled':''}>${ixCcBusy?'Saving…':'Add and process'}</button></div></details>`;
+  L.innerHTML=out}
+async function addConcall(){
+  const g=id=>document.getElementById(id).value.trim();
+  const tk=g('cc-tk').toUpperCase().replace(/\.(NS|BO)$/,''),url=g('cc-url');
+  if(!tk||!/^https?:\/\//i.test(url)){toast('Ticker and a web link are required',true);return}
+  if(/(^|\.)(bseindia|nseindia)\.com/i.test(new URL(url).hostname)){toast('BSE and NSE links are not accepted. Use the company\'s own page.',true);return}
+  ixCcBusy=true;renderConcalls();
+  try{
+    const path=`/repos/${cfg.owner}/${cfg.repo}/contents/concalls.csv`;
+    const cur=await gh(path);
+    let txt=cur?b64dec(cur.content):'ticker,date,quarter,url,ppt_url,note\n';
+    if(!txt.endsWith('\n'))txt+='\n';
+    const esc=v=>/[,"\n]/.test(v||'')?'"'+(v||'').replace(/"/g,'""')+'"':(v||'');
+    txt+=[tk,g('cc-dt'),g('cc-q'),url,g('cc-ppt'),''].map(esc).join(',')+'\n';
+    const body={message:'Add concall '+tk+' via dashboard',content:b64enc(txt)};
+    if(cur)body.sha=cur.sha;
+    await gh(path,{method:'PUT',body:JSON.stringify(body)});
+    toast(tk+' added. The summary is ready in a few minutes, press refresh then.');
+    ixCcBusy=false;await loadConcalls(cfg.owner,cfg.repo);renderConcalls()
+  }catch(e){ixCcBusy=false;toast('Could not save: '+e.message,true);renderConcalls()}}
+
 // ---- Discover (screener) ----
 const IX_PRESETS={
   quality:{label:'Quality growth',v:{roe:'15',rg:'15',de:'100'}},
@@ -1927,6 +2008,10 @@ function ixContext(q){
       if(e)facts.push(eFacts(e));
       if(s)facts.push(`${tk}: PE ${ixN(s.pe)}, ROE ${ixN(s.roe)}%, debt/equity ${ixN(s.debt_equity,0)}, ${ixSg(s.from_high)} from 52-week high, sector ${s.sector||'n/a'}.`);
       if(a.target)facts.push(`${tk}: ${a.n_analysts||'?'} analysts' average target ${a.target}.`);
+      ((concallData&&concallData.calls)||[]).filter(c=>c.ticker===tk&&c.status==='done').slice(0,2).forEach(c=>{
+        const sm=c.summary||{},n=cite('Concall summary '+(c.quarter||''),c.url,'Earnings call',c.date);
+        facts.push(`Earnings call ${c.quarter||''} [${n}]: ${sm.headline||''} Tone: ${sm.tone||'n/a'}.`);
+        ['guidance','demand','margins_costs','capex_plans','risks','numbers'].forEach(k=>{if((sm[k]||[]).length)facts.push(`  ${k}: ${sm[k].join('; ')}`)})});
       facts.push('Headlines:',...newsFor(tk,8))})}
   else{
     const soon=E.filter(e=>e.days!=null&&e.days>=0&&e.days<=10);
@@ -2031,7 +2116,7 @@ function render(){
                ['news','\u{1F4F0} News'],
               ['audit','\u{1F550} Audit'],
               ['breakouts','\u{1F680} Breakouts'],
-              ['earnings','\u{1F4C5} Earnings'],['filings','\u{1F4D1} Filings'],
+              ['earnings','\u{1F4C5} Earnings'],['concalls','\u{1F399} Concalls'],['filings','\u{1F4D1} Filings'],
               ['discover','\u{1F50E} Discover'],['ask','\u{1F916} Ask AI']];
   $('tabs').innerHTML=views.map(([k,lab])=>{
       const on=(k==='alerts')?isList:(tab===k);
@@ -2065,7 +2150,7 @@ function render(){
   const analysis={peaks:renderPeaks,held:renderHeld,costs:renderCosts,
                   plan:renderPlan,month:renderMonth,news:renderNews,
                   audit:renderAudit,breakouts:renderBreakouts,earnings:renderEarnings,
-                  filings:renderFilings,discover:renderDiscover,ask:renderAsk};
+                  filings:renderFilings,discover:renderDiscover,ask:renderAsk,concalls:renderConcalls};
   $('sortbar').style.display=analysis[tab]?'none':'';
   if(analysis[tab]){analysis[tab]();$('savebar').classList.toggle('show',dirty);
     bulkDock();return}
@@ -2722,6 +2807,7 @@ async function loadAll(){
   }catch(e){}
   await loadHistory(own,rep);
   await loadInsights(own,rep);
+  await loadConcalls(own,rep);
   try{
     const cc=await gh(`/repos/${own}/${rep}/contents/influencer_calls.csv`);
     callsSha=cc?cc.sha:null;callsCSV=cc?b64dec(cc.content):CALLS_HEADER+'\n'
