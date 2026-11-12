@@ -1729,37 +1729,88 @@ function ixNone(what){
 const ixStamp=()=>insights?`<div class="sub" style="font-size:11px;margin:0 4px 8px">Updated ${cEsc(insights.updated||'')} IST · Yahoo Finance and Google News</div>`:'';
 const ixChip=(on,label,fn)=>`<span class="pchip" style="cursor:pointer;${on?'border-color:var(--brand);color:var(--brand)':''}" onclick="${fn}">${label}</span>`;
 
-// ---- Earnings ----
-function setEarnF(f){ixEarnF=f;renderEarnings()}
-function renderEarnings(){
-  const L=$('list');
-  if(!insights||!insights.earnings||!insights.earnings.length){L.innerHTML=ixNone('earnings data');return}
-  const all=insights.earnings;
-  const soonF=e=>e.days!=null&&e.days>=0&&e.days<=14;
-  const soon=all.filter(soonF);
-  const show=all.filter(e=>ixEarnF==='all'?true:ixEarnF==='soon'?soonF(e)
-    :ixEarnF==='up'?(e.rev_yoy>0&&e.net_yoy>0):ixEarnF==='down'?(e.net_yoy!=null&&e.net_yoy<0):true);
-  const nUp=all.filter(e=>e.rev_yoy>0&&e.net_yoy>0).length,nDown=all.filter(e=>e.net_yoy!=null&&e.net_yoy<0).length;
-  let out=ixStamp();
-  if(insights.ai_brief)out+=`<div class="card" style="padding:14px 16px"><div class="sub" style="font-size:11.5px;letter-spacing:.05em;margin-bottom:6px">\u{1F916} AI BRIEF, written from the numbers below</div>`
-    +`<div style="font-size:13.5px;line-height:1.55">${ixFmt(insights.ai_brief,[])}</div></div>`;
-  out+=`<div class="card" style="padding:12px 16px"><div class="sub" style="font-size:11.5px;letter-spacing:.05em;margin-bottom:8px">REPORTING IN THE NEXT 14 DAYS · ${soon.length}</div>`
-    +(soon.length?`<div style="display:flex;flex-wrap:wrap;gap:8px">${soon.map(e=>`<span class="pchip"><b>${cEsc(e.ticker)}</b> <span class="sub">${ixDay(e.next_results)} · ${e.days===0?'today':e.days===1?'tomorrow':'in '+e.days+' days'}</span></span>`).join('')}</div>`
-      :`<div class="sub">Nothing from your holdings is due in the next two weeks.</div>`)+`</div>`;
-  out+=`<div class="card" style="padding:10px 16px;display:flex;gap:8px;flex-wrap:wrap">`
-    +ixChip(ixEarnF==='all',`All <b>${all.length}</b>`,"setEarnF('all')")
-    +ixChip(ixEarnF==='soon',`Due soon <b>${soon.length}</b>`,"setEarnF('soon')")
-    +ixChip(ixEarnF==='up',`▲ Revenue and profit both up <b>${nUp}</b>`,"setEarnF('up')")
-    +ixChip(ixEarnF==='down',`▼ Profit down <b>${nDown}</b>`,"setEarnF('down')")+`</div>`;
-  out+=`<div class="card" style="padding:0;overflow-x:auto"><table class="pk"><tr><th>Stock</th><th>Results</th><th>Quarter</th><th>Revenue</th><th>Profit</th><th>Op. margin</th><th>EPS vs estimate</th></tr>`
-    +show.map(e=>`<tr><td><b>${cEsc(e.ticker)}</b></td>`
+// ---- Earnings: a results-season scoreboard ----
+// Laid out like a results tracker: how many have reported, how many beat or
+// missed the analyst estimate, typical growth, then a sector map, what is
+// coming up, what has been declared and a leaderboard. A "beat" means EPS came
+// in above the average analyst estimate Yahoo holds; no estimate = no coverage.
+let ixEarnTab='sector', ixEarnBeat='all', ixEarnSector='';
+function setEarnTab(t){ixEarnTab=t;renderEarnings()}
+function setEarnBeat(b){ixEarnBeat=b;renderEarnings()}
+function setEarnSector(s){ixEarnSector=(ixEarnSector===s?'':s);ixEarnTab='declared';renderEarnings()}
+const ixMed=a=>{a=a.filter(v=>v!=null&&isFinite(v)).sort((x,y)=>x-y);if(!a.length)return null;const m=a.length>>1;return a.length%2?a[m]:(a[m-1]+a[m])/2};
+function ixPeriodKey(p){const m=/^(\w{3})\w*\s+(\d{4})$/.exec(p||'');if(!m)return 0;
+  return new Date(m[2]+'-'+({Jan:1,Feb:2,Mar:3,Apr:4,May:5,Jun:6,Jul:7,Aug:8,Sep:9,Oct:10,Nov:11,Dec:12}[m[1]]||1)+'-01').getTime()}
+function ixBeatOf(e){return e.eps_surprise==null?'none':e.eps_surprise>0?'beat':'miss'}
+function ixEarnTable(rows){
+  const badge=e=>{const b=ixBeatOf(e);return b==='beat'?'<span class="ex" style="color:var(--armed);border-color:var(--armed)">BEAT</span>'
+    :b==='miss'?'<span class="ex" style="color:var(--crimson);border-color:var(--crimson)">MISSED</span>':'<span class="sub" style="font-size:10.5px">no estimate</span>'};
+  return `<div class="card" style="padding:0;overflow-x:auto"><table class="pk"><tr><th>Stock</th><th>Results</th><th>Quarter</th><th>Revenue</th><th>Profit</th><th>Op. margin</th><th>EPS vs estimate</th></tr>`
+    +rows.map(e=>`<tr><td><b>${cEsc(e.ticker)}</b><div class="sub" style="font-size:10.5px">${cEsc(e.sector||'')}</div></td>`
       +`<td class="sub num" style="font-size:11.5px">${e.next_results?ixDay(e.next_results):'—'}${e.days!=null&&e.days>=0&&e.days<=14?`<br><b style="color:var(--fired)">${e.days===0?'today':e.days===1?'tomorrow':'in '+e.days+' d'}</b>`:''}</td>`
       +`<td class="sub num" style="font-size:11.5px">${cEsc(e.period||'—')}</td>`
       +`<td class="num" style="color:${ixCol(e.rev_yoy)}">${ixSg(e.rev_yoy)}<br><span class="sub" style="font-size:10.5px">₹${ixN(e.revenue_cr,0)} cr</span></td>`
       +`<td class="num" style="color:${ixCol(e.net_yoy)}">${ixSg(e.net_yoy)}<br><span class="sub" style="font-size:10.5px">₹${ixN(e.net_cr,0)} cr</span></td>`
       +`<td class="num">${e.op_margin==null?'—':ixN(e.op_margin)+'%'}</td>`
-      +`<td class="num" style="color:${ixCol(e.eps_surprise)}">${e.eps_surprise==null?'—':ixSg(e.eps_surprise)}<br><span class="sub" style="font-size:10.5px">${ixN(e.eps_actual,2)} vs ${ixN(e.eps_est,2)}</span></td></tr>`).join('')
-    +`</table></div><div class="card sub" style="font-size:11px">Revenue and profit are the latest reported quarter against the same quarter a year earlier. Dates come from Yahoo Finance and can move; confirm with the company's own notice.</div>`;
+      +`<td class="num" style="color:${ixCol(e.eps_surprise)}">${badge(e)}<br><span class="sub" style="font-size:10.5px">${e.eps_surprise==null?'':ixSg(e.eps_surprise)+' · '+ixN(e.eps_actual,2)+' vs '+ixN(e.eps_est,2)}</span></td></tr>`).join('')
+    +`</table></div>`}
+function renderEarnings(){
+  const L=$('list');
+  if(!insights||!insights.earnings||!insights.earnings.length){L.innerHTML=ixNone('earnings data');return}
+  const sec=Object.fromEntries((insights.screener||[]).map(s=>[s.ticker,s.sector]));
+  const all=insights.earnings.map(e=>({...e,sector:sec[e.ticker]||'Other'}));
+  const season=all.map(e=>e.period).filter(Boolean).sort((a,b)=>ixPeriodKey(b)-ixPeriodKey(a))[0]||'';
+  const isDecl=e=>e.period===season;
+  const decl=all.filter(isDecl),pend=all.filter(e=>!isDecl(e));
+  const beat=decl.filter(e=>ixBeatOf(e)==='beat').length,miss=decl.filter(e=>ixBeatOf(e)==='miss').length,none=decl.length-beat-miss;
+  const medRev=ixMed(decl.map(e=>e.rev_yoy)),medNet=ixMed(decl.map(e=>e.net_yoy));
+  const card=(big,lab,sub,col)=>`<div class="card" style="padding:14px 16px;margin:0"><div class="sub" style="font-size:11px">${lab}</div>`
+    +`<div style="font-size:24px;font-weight:700;margin-top:4px;${col?'color:'+col:''}">${big}</div><div class="sub" style="font-size:10.5px;margin-top:2px">${sub}</div></div>`;
+  let out=ixStamp();
+  if(insights.ai_brief)out+=`<div class="card" style="padding:14px 16px"><div class="sub" style="font-size:11.5px;letter-spacing:.05em;margin-bottom:6px">\u{1F916} AI BRIEF, written from the numbers below</div>`
+    +`<div style="font-size:13.5px;line-height:1.55">${ixFmt(insights.ai_brief,[])}</div></div>`;
+  out+=`<div class="sub" style="font-size:12px;margin:0 4px 8px">Results season: quarter ended <b>${cEsc(season)}</b>, for the ${all.length} stocks you hold</div>`
+    +`<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:12px">`
+    +card(`${decl.length} <span class="sub" style="font-size:14px">/ ${all.length}</span>`,'Declared',`${Math.round(decl.length/all.length*100)}% have reported`)
+    +card(beat,'Beat estimates',`of ${decl.length} declared`,'var(--armed)')
+    +card(miss,'Missed estimates',`of ${decl.length} declared`,'var(--crimson)')
+    +card(none,'No analyst estimate',`of ${decl.length} declared`,'var(--muted)')
+    +card(ixSg(medRev),'Typical sales growth',`profit ${ixSg(medNet)} (year on year)`,ixCol(medRev))+`</div>`;
+  const tabs=[['sector','Sector map'],['upcoming','Upcoming ('+pend.length+')'],['declared','Declared ('+decl.length+')'],['leader','Leaderboard']];
+  out+=`<div class="card" style="padding:8px 12px;display:flex;gap:8px;flex-wrap:wrap">${tabs.map(([k,l])=>ixChip(ixEarnTab===k,l,`setEarnTab('${k}')`)).join('')}</div>`;
+  if(ixEarnTab==='sector'){
+    const by={};all.forEach(e=>{(by[e.sector]=by[e.sector]||[]).push(e)});
+    out+=`<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:10px">`
+      +Object.entries(by).sort((a,b)=>b[1].length-a[1].length).map(([name,rs])=>{
+        const d=rs.filter(isDecl),b=d.filter(e=>ixBeatOf(e)==='beat').length,m=d.filter(e=>ixBeatOf(e)==='miss').length,nc=d.length-b-m,p=rs.length-d.length,t=rs.length;
+        const seg=(k,c)=>k?`<div style="width:${k/t*100}%;background:${c}"></div>`:'';
+        return `<div class="card" style="padding:14px 16px;margin:0;cursor:pointer" onclick="setEarnSector('${cEsc(name).replace(/'/g,"\\'")}')">`
+          +`<div style="display:flex;justify-content:space-between;gap:8px"><b style="font-size:13.5px">${cEsc(name)}</b><span class="sub" style="font-size:11px">${d.length}/${t} declared</span></div>`
+          +`<div style="display:flex;height:6px;border-radius:3px;overflow:hidden;margin:10px 0 6px;background:var(--line)">${seg(b,'var(--armed)')}${seg(m,'var(--crimson)')}${seg(p,'var(--fired)')}${seg(nc,'var(--muted)')}</div>`
+          +`<div class="sub" style="font-size:10.5px"><span style="color:var(--armed)">${b} beat</span> · <span style="color:var(--crimson)">${m} missed</span> · <span style="color:var(--fired)">${p} pending</span> · ${nc} no estimate</div>`
+          +`<div style="display:flex;gap:24px;margin-top:10px"><div><div class="sub" style="font-size:10.5px">Sales YoY</div><b style="color:${ixCol(ixMed(d.map(e=>e.rev_yoy)))}">${ixSg(ixMed(d.map(e=>e.rev_yoy)))}</b></div>`
+          +`<div><div class="sub" style="font-size:10.5px">Profit YoY</div><b style="color:${ixCol(ixMed(d.map(e=>e.net_yoy)))}">${ixSg(ixMed(d.map(e=>e.net_yoy)))}</b></div></div></div>`}).join('')+`</div>`}
+  else if(ixEarnTab==='upcoming'){
+    const rows=pend.slice().sort((a,b)=>(a.days==null)-(b.days==null)||(a.days-b.days));
+    out+=`<div class="sub" style="margin:6px 4px">Not yet reported for ${cEsc(season)}, soonest first. The figures are the previous quarter's.</div>`+ixEarnTable(rows)}
+  else if(ixEarnTab==='declared'){
+    let rows=decl.filter(e=>(ixEarnBeat==='all'||ixBeatOf(e)===ixEarnBeat)&&(!ixEarnSector||e.sector===ixEarnSector));
+    rows.sort((a,b)=>(b.eps_surprise==null?-999:b.eps_surprise)-(a.eps_surprise==null?-999:a.eps_surprise));
+    out+=`<div class="card" style="padding:10px 16px;display:flex;gap:8px;flex-wrap:wrap">`
+      +ixChip(ixEarnBeat==='all','All',"setEarnBeat('all')")+ixChip(ixEarnBeat==='beat',`Beat <b>${beat}</b>`,"setEarnBeat('beat')")
+      +ixChip(ixEarnBeat==='miss',`Missed <b>${miss}</b>`,"setEarnBeat('miss')")+ixChip(ixEarnBeat==='none',`No estimate <b>${none}</b>`,"setEarnBeat('none')")
+      +(ixEarnSector?ixChip(true,'Sector: '+cEsc(ixEarnSector)+' ✕',`setEarnSector('${cEsc(ixEarnSector).replace(/'/g,"\\'")}')`):'')+`</div>`+ixEarnTable(rows)}
+  else{
+    const withN=decl.filter(e=>e.net_yoy!=null).sort((a,b)=>b.net_yoy-a.net_yoy);
+    const line=e=>`<div style="display:flex;justify-content:space-between;gap:10px;padding:7px 0;border-bottom:1px solid var(--line);font-size:13px"><span><b>${cEsc(e.ticker)}</b> <span class="sub" style="font-size:10.5px">${cEsc(e.sector)}</span></span>`
+      +`<span><b style="color:${ixCol(e.net_yoy)}">${ixSg(e.net_yoy)}</b> <span class="sub" style="font-size:10.5px">profit · sales ${ixSg(e.rev_yoy)}</span></span></div>`;
+    const surp=decl.filter(e=>e.eps_surprise!=null).sort((a,b)=>b.eps_surprise-a.eps_surprise);
+    out+=`<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:10px">`
+      +`<div class="card" style="margin:0"><div class="sub" style="font-size:11.5px;letter-spacing:.05em;margin-bottom:6px">FASTEST PROFIT GROWTH</div>${withN.slice(0,8).map(line).join('')}</div>`
+      +`<div class="card" style="margin:0"><div class="sub" style="font-size:11.5px;letter-spacing:.05em;margin-bottom:6px">WEAKEST PROFIT GROWTH</div>${withN.slice(-8).reverse().map(line).join('')}</div>`
+      +`<div class="card" style="margin:0"><div class="sub" style="font-size:11.5px;letter-spacing:.05em;margin-bottom:6px">BIGGEST BEATS VS ESTIMATE</div>${surp.slice(0,8).map(e=>`<div style="display:flex;justify-content:space-between;padding:7px 0;border-bottom:1px solid var(--line);font-size:13px"><b>${cEsc(e.ticker)}</b><b style="color:var(--armed)">${ixSg(e.eps_surprise)}</b></div>`).join('')}</div>`
+      +`<div class="card" style="margin:0"><div class="sub" style="font-size:11.5px;letter-spacing:.05em;margin-bottom:6px">BIGGEST MISSES</div>${surp.slice(-8).reverse().map(e=>`<div style="display:flex;justify-content:space-between;padding:7px 0;border-bottom:1px solid var(--line);font-size:13px"><b>${cEsc(e.ticker)}</b><b style="color:var(--crimson)">${ixSg(e.eps_surprise)}</b></div>`).join('')}</div></div>`}
+  out+=`<div class="card sub" style="font-size:11px">Growth is the latest reported quarter against the same quarter a year earlier. "Beat" and "missed" compare EPS with the average analyst estimate on Yahoo Finance; many smaller companies have none. Dates come from Yahoo and can move, so confirm with the company's own notice.</div>`;
   L.innerHTML=out}
 
 // ---- Filings and concalls ----
