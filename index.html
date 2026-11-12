@@ -1710,6 +1710,237 @@ function renderBreakouts(){
     price, not a signal to act on.</div>`;
 }
 
+// ===== Research desk: Earnings, Filings, Discover, Ask AI =================
+// Data comes from insights.json (written by insights.py on a schedule): Yahoo
+// fundamentals and results dates, company news sorted by type, and a screener
+// table. Nothing here tells you to buy or sell; it reports what was published.
+let insights=null, ixEarnF='all', ixFilKind='', ixFilHeld=false, ixDiscSort='from_high',
+    ixDisc={pe:'',roe:'',rg:'',pg:'',de:'',high:'',who:'all',sector:''}, ixLog=[], ixBusy=false;
+async function loadInsights(own,rep){
+  try{const f=await gh(`/repos/${own}/${rep}/contents/insights.json`);
+    insights=f?JSON.parse(b64dec(f.content)):null}catch(e){insights=null}}
+const ixN=(v,d=1)=>v==null||!isFinite(v)?'—':Number(v).toFixed(d);
+const ixSg=v=>v==null||!isFinite(v)?'—':(v>=0?'+':'−')+Math.abs(v).toFixed(1)+'%';
+const ixCol=v=>v==null||!isFinite(v)?'var(--muted)':v>=0?'var(--armed)':'var(--crimson)';
+const ixDay=s=>{const d=new Date(String(s)+'T00:00:00+05:30');
+  return isNaN(d)?'':d.toLocaleDateString('en-IN',{weekday:'short',day:'numeric',month:'short'})};
+function ixNone(what){
+  return `<div class="card"><div class="ttl">No ${what} yet</div><p class="sub" style="margin-top:6px">This reads insights.json, written by the "Research desk insights" workflow. Run it once from the repo's Actions tab and it appears here.</p></div>`}
+const ixStamp=()=>insights?`<div class="sub" style="font-size:11px;margin:0 4px 8px">Updated ${cEsc(insights.updated||'')} IST · Yahoo Finance and Google News</div>`:'';
+const ixChip=(on,label,fn)=>`<span class="pchip" style="cursor:pointer;${on?'border-color:var(--brand);color:var(--brand)':''}" onclick="${fn}">${label}</span>`;
+
+// ---- Earnings ----
+function setEarnF(f){ixEarnF=f;renderEarnings()}
+function renderEarnings(){
+  const L=$('list');
+  if(!insights||!insights.earnings||!insights.earnings.length){L.innerHTML=ixNone('earnings data');return}
+  const all=insights.earnings;
+  const soonF=e=>e.days!=null&&e.days>=0&&e.days<=14;
+  const soon=all.filter(soonF);
+  const show=all.filter(e=>ixEarnF==='all'?true:ixEarnF==='soon'?soonF(e)
+    :ixEarnF==='up'?(e.rev_yoy>0&&e.net_yoy>0):ixEarnF==='down'?(e.net_yoy!=null&&e.net_yoy<0):true);
+  const nUp=all.filter(e=>e.rev_yoy>0&&e.net_yoy>0).length,nDown=all.filter(e=>e.net_yoy!=null&&e.net_yoy<0).length;
+  let out=ixStamp();
+  if(insights.ai_brief)out+=`<div class="card" style="padding:14px 16px"><div class="sub" style="font-size:11.5px;letter-spacing:.05em;margin-bottom:6px">\u{1F916} AI BRIEF, written from the numbers below</div>`
+    +`<div style="font-size:13.5px;line-height:1.55">${ixFmt(insights.ai_brief,[])}</div></div>`;
+  out+=`<div class="card" style="padding:12px 16px"><div class="sub" style="font-size:11.5px;letter-spacing:.05em;margin-bottom:8px">REPORTING IN THE NEXT 14 DAYS · ${soon.length}</div>`
+    +(soon.length?`<div style="display:flex;flex-wrap:wrap;gap:8px">${soon.map(e=>`<span class="pchip"><b>${cEsc(e.ticker)}</b> <span class="sub">${ixDay(e.next_results)} · ${e.days===0?'today':e.days===1?'tomorrow':'in '+e.days+' days'}</span></span>`).join('')}</div>`
+      :`<div class="sub">Nothing from your holdings is due in the next two weeks.</div>`)+`</div>`;
+  out+=`<div class="card" style="padding:10px 16px;display:flex;gap:8px;flex-wrap:wrap">`
+    +ixChip(ixEarnF==='all',`All <b>${all.length}</b>`,"setEarnF('all')")
+    +ixChip(ixEarnF==='soon',`Due soon <b>${soon.length}</b>`,"setEarnF('soon')")
+    +ixChip(ixEarnF==='up',`▲ Revenue and profit both up <b>${nUp}</b>`,"setEarnF('up')")
+    +ixChip(ixEarnF==='down',`▼ Profit down <b>${nDown}</b>`,"setEarnF('down')")+`</div>`;
+  out+=`<div class="card" style="padding:0;overflow-x:auto"><table class="pk"><tr><th>Stock</th><th>Results</th><th>Quarter</th><th>Revenue</th><th>Profit</th><th>Op. margin</th><th>EPS vs estimate</th></tr>`
+    +show.map(e=>`<tr><td><b>${cEsc(e.ticker)}</b></td>`
+      +`<td class="sub num" style="font-size:11.5px">${e.next_results?ixDay(e.next_results):'—'}${e.days!=null&&e.days>=0&&e.days<=14?`<br><b style="color:var(--fired)">${e.days===0?'today':e.days===1?'tomorrow':'in '+e.days+' d'}</b>`:''}</td>`
+      +`<td class="sub num" style="font-size:11.5px">${cEsc(e.period||'—')}</td>`
+      +`<td class="num" style="color:${ixCol(e.rev_yoy)}">${ixSg(e.rev_yoy)}<br><span class="sub" style="font-size:10.5px">₹${ixN(e.revenue_cr,0)} cr</span></td>`
+      +`<td class="num" style="color:${ixCol(e.net_yoy)}">${ixSg(e.net_yoy)}<br><span class="sub" style="font-size:10.5px">₹${ixN(e.net_cr,0)} cr</span></td>`
+      +`<td class="num">${e.op_margin==null?'—':ixN(e.op_margin)+'%'}</td>`
+      +`<td class="num" style="color:${ixCol(e.eps_surprise)}">${e.eps_surprise==null?'—':ixSg(e.eps_surprise)}<br><span class="sub" style="font-size:10.5px">${ixN(e.eps_actual,2)} vs ${ixN(e.eps_est,2)}</span></td></tr>`).join('')
+    +`</table></div><div class="card sub" style="font-size:11px">Revenue and profit are the latest reported quarter against the same quarter a year earlier. Dates come from Yahoo Finance and can move; confirm with the company's own notice.</div>`;
+  L.innerHTML=out}
+
+// ---- Filings and concalls ----
+const IX_KINDS=[['concall','\u{1F399} Concall'],['results','\u{1F4CA} Results'],['orders','\u{1F4E6} Orders'],['dividend','\u{1F4B0} Dividend / bonus'],
+  ['rating','⭐ Rating'],['promoter','\u{1F465} Promoter / deals'],['fundraise','\u{1F3E6} Fund raise'],['board','\u{1F4C5} Board / AGM']];
+function setFilKind(k){ixFilKind=(ixFilKind===k?'':k);renderFilings()}
+function toggleFilHeld(){ixFilHeld=!ixFilHeld;renderFilings()}
+function renderFilings(){
+  const L=$('list');
+  if(!insights||!insights.filings||!insights.filings.length){L.innerHTML=ixNone('filings');return}
+  const base=insights.filings.filter(f=>!ixFilHeld||f.held);
+  const cnt=k=>base.filter(f=>f.type===k).length;
+  const show=base.filter(f=>!ixFilKind||f.type===ixFilKind).slice(0,120);
+  const lab=Object.fromEntries(IX_KINDS);
+  L.innerHTML=ixStamp()
+    +`<div class="card" style="padding:10px 16px;display:flex;gap:8px;flex-wrap:wrap">`
+    +ixChip(!ixFilKind,`All <b>${base.length}</b>`,"setFilKind('')")
+    +IX_KINDS.map(([k,l])=>ixChip(ixFilKind===k,`${l} <b>${cnt(k)}</b>`,`setFilKind('${k}')`)).join('')
+    +`<span style="flex:1"></span>`+ixChip(ixFilHeld,'Held only',"toggleFilHeld()")+`</div>`
+    +show.map(f=>`<a class="card newsrow" href="${cEsc(f.link||'#')}" ${f.link?'target="_blank" rel="noopener"':''}>`
+      +`<div style="display:flex;gap:10px;align-items:baseline;flex-wrap:wrap"><b>${cEsc(f.ticker)}</b>`
+      +`<span class="ex">${cEsc(lab[f.type]||f.type)}</span>${f.held?'<span class="sub" style="font-size:10.5px">held</span>':''}`
+      +`<span class="sub" style="margin-left:auto;font-size:11.5px">${cEsc(f.source||'')} · ${cEsc(f.when||'')}</span></div>`
+      +`<div style="margin-top:5px;font-size:14px;line-height:1.45">${cEsc(f.title)}</div></a>`).join('')
+    +`<div class="card sub" style="font-size:11px">Sorted by headline wording into types, so a concall write-up is easy to find. NSE and BSE block scripted access, so these are news-site write-ups and links, not the filings themselves.</div>`}
+
+// ---- Discover (screener) ----
+const IX_PRESETS={
+  quality:{label:'Quality growth',v:{roe:'15',rg:'15',de:'100'}},
+  nearhigh:{label:'Near 52-week high',v:{high:'5'}},
+  value:{label:'Cheap and profitable',v:{pe:'20',roe:'12'}},
+  beaten:{label:'Beaten down, still growing',v:{high:'-30',pg:'0'}},
+  clear:{label:'Clear',v:{}}};
+function ixPreset(k){ixDisc={pe:'',roe:'',rg:'',pg:'',de:'',high:'',who:ixDisc.who,sector:''};Object.assign(ixDisc,IX_PRESETS[k].v);renderDiscover()}
+function ixSet(k,v){ixDisc[k]=v;ixDiscBody()}
+function ixPass(s){
+  const d=ixDisc,n=v=>v===''?null:parseFloat(v);
+  if(n(d.pe)!=null&&!(s.pe!=null&&s.pe>0&&s.pe<=n(d.pe)))return false;
+  if(n(d.roe)!=null&&!(s.roe!=null&&s.roe>=n(d.roe)))return false;
+  if(n(d.rg)!=null&&!(s.rev_growth!=null&&s.rev_growth>=n(d.rg)))return false;
+  if(n(d.pg)!=null&&!(s.profit_growth!=null&&s.profit_growth>=n(d.pg)))return false;
+  if(n(d.de)!=null&&!(s.debt_equity==null||s.debt_equity<=n(d.de)))return false;
+  if(d.high!==''){const h=n(d.high);
+    if(h>=0){if(!(s.from_high!=null&&s.from_high>=-h))return false}
+    else if(!(s.from_high!=null&&s.from_high<=h))return false}
+  if(d.who==='held'&&!s.held)return false;
+  if(d.who==='called'&&!(s.called_by>0))return false;
+  if(d.who==='new'&&(s.held||!(s.called_by>0)))return false;
+  if(d.sector&&s.sector!==d.sector)return false;
+  return true}
+function renderDiscover(){
+  const L=$('list');
+  if(!insights||!insights.screener||!insights.screener.length){L.innerHTML=ixNone('screener data');return}
+  const sectors=[...new Set(insights.screener.map(s=>s.sector).filter(Boolean))].sort();
+  const inp=(k,lab,ph)=>`<label class="sub" style="font-size:11px;display:block">${lab}<input inputmode="decimal" style="width:100%;margin-top:3px" placeholder="${ph}" value="${cEsc(ixDisc[k])}" oninput="ixSet('${k}',this.value)"></label>`;
+  L.innerHTML=ixStamp()
+    +`<div class="card" style="padding:14px 16px"><div class="sub" style="font-size:11.5px;letter-spacing:.05em;margin-bottom:8px">DISCOVER · ${insights.screener.length} stocks you hold or an analyst has called</div>`
+    +`<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px">${Object.entries(IX_PRESETS).map(([k,p])=>ixChip(false,p.label,`ixPreset('${k}')`)).join('')}</div>`
+    +`<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:10px">`
+    +inp('pe','Max PE','e.g. 25')+inp('roe','Min ROE %','e.g. 15')+inp('rg','Min revenue growth %','e.g. 15')
+    +inp('pg','Min profit growth %','e.g. 10')+inp('de','Max debt/equity','e.g. 100')
+    +inp('high','Within % of 52w high (negative = at least that far below)','e.g. 5 or -30')
+    +`<label class="sub" style="font-size:11px;display:block">Show<select style="width:100%;margin-top:3px" onchange="ixSet('who',this.value)">`
+    +[['all','Everything'],['held','Only what I hold'],['called','Called by analysts'],['new','Called, not held']].map(([k,l])=>`<option value="${k}"${ixDisc.who===k?' selected':''}>${l}</option>`).join('')+`</select></label>`
+    +`<label class="sub" style="font-size:11px;display:block">Sector<select style="width:100%;margin-top:3px" onchange="ixSet('sector',this.value)"><option value="">Any</option>`
+    +sectors.map(s=>`<option${ixDisc.sector===s?' selected':''}>${cEsc(s)}</option>`).join('')+`</select></label></div></div>`
+    +`<div id="ixdisc"></div>`;
+  ixDiscBody()}
+function ixSortBy(k){ixDiscSort=k;ixDiscBody()}
+function ixDiscBody(){
+  const box=$('ixdisc');if(!box)return;
+  const rows=insights.screener.filter(ixPass);
+  const k=ixDiscSort,dir={from_high:-1,pe:1,de:1,debt_equity:1}[k]||-1;
+  const val=s=>{const v=s[k];return v==null?(dir<0?-Infinity:Infinity):v};
+  rows.sort((a,b)=>dir<0?val(b)-val(a):val(a)-val(b));
+  const th=(k2,l)=>`<th style="cursor:pointer${ixDiscSort===k2?';color:var(--brand)':''}" onclick="ixSortBy('${k2}')">${l}${ixDiscSort===k2?' ↓':''}</th>`;
+  box.innerHTML=`<div class="sub" style="margin:2px 4px 8px">${rows.length} match${rows.length===1?'':'es'}${rows.length>60?', showing the first 60':''}. Tap a column to sort.</div>`
+    +`<div class="card" style="padding:0;overflow-x:auto"><table class="pk"><tr><th>Stock</th>${th('mcap_cr','Mkt cap ₹cr')}${th('pe','PE')}${th('roe','ROE')}${th('rev_growth','Revenue growth')}${th('profit_growth','Profit growth')}${th('debt_equity','Debt/Eq')}${th('from_high','From 52w high')}</tr>`
+    +rows.slice(0,60).map(s=>`<tr><td><b>${cEsc(s.ticker)}</b>${s.held?' <span class="sub" style="font-size:10px">held</span>':s.called_by?` <span class="sub" style="font-size:10px">${s.called_by} call${s.called_by>1?'s':''}</span>`:''}<div class="sub" style="font-size:10.5px">${cEsc((s.name||'').slice(0,26))}</div></td>`
+      +`<td class="num sub">${s.mcap_cr==null?'—':Number(s.mcap_cr).toLocaleString('en-IN')}</td><td class="num">${ixN(s.pe)}</td>`
+      +`<td class="num" style="color:${ixCol(s.roe==null?null:s.roe-10)}">${s.roe==null?'—':ixN(s.roe)+'%'}</td>`
+      +`<td class="num" style="color:${ixCol(s.rev_growth)}">${ixSg(s.rev_growth)}</td><td class="num" style="color:${ixCol(s.profit_growth)}">${ixSg(s.profit_growth)}</td>`
+      +`<td class="num">${ixN(s.debt_equity,0)}</td><td class="num" style="color:${ixCol(s.from_high==null?null:s.from_high+10)}">${ixSg(s.from_high)}</td></tr>`).join('')
+    +`</table></div><div class="card sub" style="font-size:11px">A screen narrows a list, it does not pick winners. Figures are Yahoo Finance's trailing numbers and can be missing or stale for smaller companies.</div>`}
+
+// ---- Ask AI (free Gemini key, kept in this browser only) ----
+const IX_ASKS=['Which of my stocks report results in the next week?','Which holdings had the weakest quarter, and why?','What did managements say on their latest earnings calls?','Which of my stocks are growing fastest?'];
+function ixKey(){try{return localStorage.getItem('alertdesk-gemini')||''}catch(e){return ''}}
+function ixSaveKey(){const v=($('ixkey').value||'').trim();
+  try{if(v)localStorage.setItem('alertdesk-gemini',v);else localStorage.removeItem('alertdesk-gemini')}catch(e){}
+  toast(v?'Key saved in this browser':'Key removed');renderAsk()}
+function ixFmt(text,src){
+  let h=cEsc(text).replace(/\*\*(.+?)\*\*/g,'<b>$1</b>').replace(/^\s*[-*]\s+/gm,'• ');
+  h=h.replace(/\[(\d{1,2})\]/g,(m,n)=>{const s=src[n-1];
+    return s&&s.link?`<a class="pchip" style="padding:0 6px;font-size:10.5px" href="${cEsc(s.link)}" target="_blank" rel="noopener" title="${cEsc(s.title)}">${n}</a>`:m});
+  return h.replace(/\n/g,'<br>')}
+function ixContext(q){
+  const S=(insights&&insights.screener)||[],E=(insights&&insights.earnings)||[],F=(insights&&insights.filings)||[];
+  const known=new Set(S.map(s=>s.ticker).concat(Object.keys(researchBy||{})));
+  const asked=[...new Set((q.toUpperCase().match(/[A-Z][A-Z0-9&-]{1,14}/g)||[]).filter(w=>known.has(w)))].slice(0,3);
+  const src=[],facts=[];
+  const cite=(title,link,source,when)=>{src.push({title,link,source,when});return src.length};
+  const eFacts=e=>`${e.ticker}: latest quarter ${e.period||'?'}, revenue ${ixSg(e.rev_yoy)} and profit ${ixSg(e.net_yoy)} year on year, operating margin ${ixN(e.op_margin)}%, EPS ${ixN(e.eps_actual,2)} vs estimate ${ixN(e.eps_est,2)}. ${e.margin_note||''} Next results ${e.next_results||'date unknown'}.`;
+  const newsFor=(tk,n)=>{
+    const seen=new Set(),out=[];
+    F.filter(f=>f.ticker===tk).sort((a,b)=>(b.type==='concall')-(a.type==='concall')).concat(
+      ((researchBy[tk]||{}).recent_headlines||[]).map(h=>({title:h.title,link:h.link,source:h.provider,when:h.when,type:'news'}))
+    ).forEach(f=>{const k=(f.title||'').slice(0,60);if(!f.title||seen.has(k)||out.length>=n)return;seen.add(k);out.push(f)});
+    return out.map(f=>`[${cite(f.title,f.link,f.source,f.when)}] ${f.title} (${f.source||'news'}, ${f.when||''})`)};
+  if(asked.length){
+    asked.forEach(tk=>{
+      const e=E.find(x=>x.ticker===tk),s=S.find(x=>x.ticker===tk),r=researchBy[tk]||{},a=r.analyst||{};
+      facts.push(`== ${tk} ==`);
+      if(e)facts.push(eFacts(e));
+      if(s)facts.push(`${tk}: PE ${ixN(s.pe)}, ROE ${ixN(s.roe)}%, debt/equity ${ixN(s.debt_equity,0)}, ${ixSg(s.from_high)} from 52-week high, sector ${s.sector||'n/a'}.`);
+      if(a.target)facts.push(`${tk}: ${a.n_analysts||'?'} analysts' average target ${a.target}.`);
+      facts.push('Headlines:',...newsFor(tk,8))})}
+  else{
+    const soon=E.filter(e=>e.days!=null&&e.days>=0&&e.days<=10);
+    facts.push('Results due in the next 10 days: '+(soon.map(e=>`${e.ticker} (${e.next_results})`).join(', ')||'none'));
+    const ranked=E.filter(e=>e.net_yoy!=null).sort((a,b)=>a.net_yoy-b.net_yoy);
+    facts.push('Weakest recent quarters (profit year on year):',...ranked.slice(0,5).map(eFacts));
+    facts.push('Strongest recent quarters:',...ranked.slice(-5).reverse().map(eFacts));
+    const cc=F.filter(f=>f.held&&f.type==='concall').slice(0,8);
+    facts.push('Recent earnings-call write-ups:',...cc.map(f=>`[${cite(f.title,f.link,f.source,f.when)}] ${f.ticker}: ${f.title} (${f.source}, ${f.when})`))}
+  return {asked,facts:facts.join('\n'),src}}
+async function ixGemini(key,prompt){
+  let last='';
+  for(const m of ['gemini-flash-latest','gemini-2.0-flash','gemini-2.5-flash']){
+    const r=await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${m}:generateContent`,
+      {method:'POST',headers:{'Content-Type':'application/json','x-goog-api-key':key},
+       body:JSON.stringify({contents:[{parts:[{text:prompt}]}],generationConfig:{temperature:0.2}})});
+    if(r.status===429)throw new Error("Gemini's free daily quota is used up. It resets at midnight Pacific time.");
+    if(r.status===400||r.status===403){const t=await r.text();
+      if(/API key|permission|PERMISSION/i.test(t))throw new Error('Gemini rejected the key. Check it was copied in full.');last=t.slice(0,100);continue}
+    if(!r.ok){last='HTTP '+r.status;continue}
+    const j=await r.json(),t=((j.candidates||[{}])[0].content||{parts:[]}).parts.map(p=>p.text||'').join('');
+    if(t.trim())return t.trim();last='empty reply'}
+  throw new Error('Gemini did not answer ('+last+').')}
+async function ixAsk(q){
+  q=(q||($('ixq')&&$('ixq').value)||'').trim();
+  if(!q||ixBusy)return;
+  const key=ixKey();
+  if(!key){toast('Paste a free Gemini key first',true);return}
+  if(!insights){toast('No insights data yet, run the workflow once',true);return}
+  ixBusy=true;const t0=Date.now();
+  const entry={q,a:null,err:null,src:[],secs:0};ixLog.unshift(entry);ixLog=ixLog.slice(0,6);renderAsk();
+  try{
+    const c=ixContext(q);entry.src=c.src;
+    const prompt=`You explain Indian stock results to a non-expert investor in plain English.
+Use ONLY the facts and numbered sources below. If they do not answer the question, say so plainly instead of guessing.
+Never give buy, sell or hold advice and never predict a price. Put the source number in square brackets, like [2], after a claim taken from a headline.
+Say clearly when you are working from news write-ups of a call rather than the call itself. Keep it under 170 words, short paragraphs, no headings.
+
+QUESTION: ${q}
+
+FACTS:
+${c.facts}`;
+    entry.a=await ixGemini(key,prompt)
+  }catch(e){entry.err=e.message||String(e)}
+  entry.secs=(Date.now()-t0)/1000;ixBusy=false;renderAsk()}
+function renderAsk(){
+  const L=$('list'),has=!!ixKey();
+  const keyBox=has?`<div class="sub" style="font-size:11.5px">Gemini key saved in this browser. <a href="#" onclick="try{localStorage.removeItem('alertdesk-gemini')}catch(e){};renderAsk();return false" style="color:var(--brand)">Remove</a></div>`
+    :`<div class="card" style="padding:14px 16px"><b>Add a free Gemini key to switch this on</b>
+      <ol class="sub" style="font-size:12px;margin:8px 0 10px 18px;line-height:1.6"><li>Open <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener" style="color:var(--brand)">aistudio.google.com/apikey</a> and press Create API key (free, no card).</li><li>Paste it below. It stays in this browser and is sent only to Google.</li></ol>
+      <div style="display:flex;gap:8px"><input id="ixkey" type="password" autocomplete="off" placeholder="AIza…" style="flex:1"><button onclick="ixSaveKey()">Save key</button></div></div>`;
+  L.innerHTML=ixStamp()+`<div class="card" style="padding:14px 16px">`
+    +`<div class="sub" style="font-size:11.5px;letter-spacing:.05em;margin-bottom:8px">\u{1F916} ASK ANYTHING ABOUT YOUR STOCKS</div>`
+    +`<div style="display:flex;gap:8px"><input id="ixq" style="flex:1" placeholder="e.g. Why did ABB's profit fall even though sales rose?" onkeydown="if(event.key==='Enter')ixAsk()"><button onclick="ixAsk()"${ixBusy?' disabled':''}>${ixBusy?'Thinking…':'Ask'}</button></div>`
+    +`<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">${IX_ASKS.map(a=>`<span class="pchip" style="cursor:pointer" onclick="ixAsk('${a.replace(/'/g,"\\'")}')">${cEsc(a)}</span>`).join('')}</div>`
+    +`<div class="sub" style="font-size:11px;margin-top:10px;line-height:1.5">Name a stock (like ABB) and the answer focuses on it. It is built from Yahoo's quarterly numbers and news write-ups of the earnings calls, not the call transcript itself, and it never says buy or sell. Your question and those stock facts are sent to Google's Gemini.</div></div>`
+    +keyBox
+    +ixLog.map(e=>`<div class="card" style="padding:14px 16px"><div style="font-weight:600;margin-bottom:8px">${cEsc(e.q)}</div>`
+      +(e.a==null&&!e.err?`<div class="sub">Reading the numbers and headlines…</div>`
+        :`<div class="sub" style="font-size:11px;margin-bottom:8px">✦ Thought for ${e.secs.toFixed(1)}s</div>`
+          +(e.err?`<div style="color:var(--crimson)">${cEsc(e.err)}</div>`:`<div style="font-size:14px;line-height:1.6">${ixFmt(e.a,e.src)}</div>`
+          +(e.src.length?`<details style="margin-top:10px"><summary class="sub" style="cursor:pointer;font-size:11.5px">${e.src.length} sources used</summary>`
+            +e.src.map((s,i)=>`<div style="font-size:12px;margin-top:5px"><b>${i+1}</b> <a href="${cEsc(s.link||'#')}" target="_blank" rel="noopener">${cEsc(s.title)}</a> <span class="sub">· ${cEsc(s.source||'')} ${cEsc(s.when||'')}</span></div>`).join('')+`</details>`:'')))
+      +`</div>`).join('')}
+
 function setTab(t){tab=t;render()}
 
 function accountsOf(list){
@@ -1748,7 +1979,9 @@ function render(){
                ['month','\u{1F4C6} Month'],
                ['news','\u{1F4F0} News'],
               ['audit','\u{1F550} Audit'],
-              ['breakouts','\u{1F680} Breakouts']];
+              ['breakouts','\u{1F680} Breakouts'],
+              ['earnings','\u{1F4C5} Earnings'],['filings','\u{1F4D1} Filings'],
+              ['discover','\u{1F50E} Discover'],['ask','\u{1F916} Ask AI']];
   $('tabs').innerHTML=views.map(([k,lab])=>{
       const on=(k==='alerts')?isList:(tab===k);
       return `<div class="vtab${on?' on':''}" onclick="setTab('${k}')">${lab}</div>`
@@ -1780,7 +2013,8 @@ function render(){
 
   const analysis={peaks:renderPeaks,held:renderHeld,costs:renderCosts,
                   plan:renderPlan,month:renderMonth,news:renderNews,
-                  audit:renderAudit,breakouts:renderBreakouts};
+                  audit:renderAudit,breakouts:renderBreakouts,earnings:renderEarnings,
+                  filings:renderFilings,discover:renderDiscover,ask:renderAsk};
   $('sortbar').style.display=analysis[tab]?'none':'';
   if(analysis[tab]){analysis[tab]();$('savebar').classList.toggle('show',dirty);
     bulkDock();return}
@@ -2436,6 +2670,7 @@ async function loadAll(){
     if(jf){const j=JSON.parse(b64dec(jf.content)||'{}');calls=j.calls||calls;callsUpdated=j.updated||''}
   }catch(e){}
   await loadHistory(own,rep);
+  await loadInsights(own,rep);
   try{
     const cc=await gh(`/repos/${own}/${rep}/contents/influencer_calls.csv`);
     callsSha=cc?cc.sha:null;callsCSV=cc?b64dec(cc.content):CALLS_HEADER+'\n'
