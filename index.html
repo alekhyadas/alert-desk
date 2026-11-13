@@ -388,6 +388,7 @@
   <button id="privbtn" class="ib" title="Hide amounts" aria-label="Toggle privacy"
     onclick="togglePrivacy()"></button>
   <div id="runline">Not connected</div>
+  <button class="small" id="refreshdata" onclick="refreshPublishedData()" title="Read the latest published portfolio and calls; this does not start a GitHub job">↻ Refresh data</button>
 </header>
 
 <div class="card" id="setup">
@@ -2821,22 +2822,39 @@ async function loadAll(){
       head.forEach((h,i)=>o[h.trim()]=(c[i]||'').trim());return o})
       .filter(r=>r.date)
   }catch(e){history=[]}
+  await refreshRunStatus();
+  dirty=false;rearm.clear();ack.clear();snooze.clear();render()}
+
+async function refreshRunStatus(){
+  $('runline').textContent='Price job: no runs found';
   try{
-    const runs=await gh(`/repos/${own}/${rep}/actions/runs?per_page=1`);
+    const runs=await gh(`/repos/${cfg.owner}/${cfg.repo}/actions/workflows/alerts.yml/runs?per_page=1`);
     if(runs&&runs.workflow_runs&&runs.workflow_runs.length){
       const r=runs.workflow_runs[0];
-      const when=new Date(r.updated_at).toLocaleString('en-IN',{dateStyle:'medium',timeStyle:'short'});
+      const when=new Date(r.updated_at).toLocaleString('en-IN',{dateStyle:'medium',timeStyle:'short',timeZone:'Asia/Kolkata'});
       const late=staleCheck(r.updated_at);
-      $('runline').innerHTML=`Last check: ${when} \u00B7 ${r.conclusion==='success'?'ok':(r.status==='in_progress'?'running':'<span class="err">'+(r.conclusion||r.status)+'</span>')}`
-        + (late?` <span class="err">\u00B7 ${late} min old while the market is open, prices on screen may be stale</span>`:'')}
+      $('runline').innerHTML=`Price job: ${when} IST \u00B7 ${r.conclusion==='success'?'ok':(r.status==='in_progress'?'running':'<span class="err">'+cEsc(r.conclusion||r.status)+'</span>')}`
+        + (late?` <span class="err">\u00B7 ${late} min old while the market is open; scheduled update overdue</span>`:'')}
   }catch(e){
     // Swallowing this as "unknown" hid the actual cause for weeks. The call
     // needs Actions: read on the token; Contents alone returns 403.
     const perm=/403|Resource not accessible/i.test(e.message||'');
     $('runline').innerHTML=perm
-      ? 'Last check: <span class="err">token needs Actions: read</span>'
-      : 'Last check: <span class="err">could not reach GitHub</span>';}
-  dirty=false;rearm.clear();ack.clear();snooze.clear();render()}
+      ? 'Price job: <span class="err">token needs Actions: read</span>'
+      : 'Price job: <span class="err">could not reach GitHub</span>';}
+  $('runline').innerHTML+=`<div class="sub" style="font-size:11px">Portfolio snapshot: ${cEsc(digestDate||'unavailable')} · Calls snapshot: ${cEsc(callsUpdated||'unavailable')} IST</div>`;
+}
+
+let dataRefreshBusy=false;
+async function refreshPublishedData(silent){
+  if(dataRefreshBusy||!cfg.token)return;
+  if(dirty||callsDirty){if(!silent)toast('Save or discard staged changes before refreshing.');return}
+  if(silent&&(document.hidden||document.activeElement?.matches('input,textarea,select')||$('cl-tk')?.value.trim()))return;
+  dataRefreshBusy=true;$('refreshdata').disabled=true;
+  try{await loadAll();if(!silent)toast('Latest published portfolio and calls loaded. This does not start a price job.')}
+  catch(e){if(!silent)toast('Refresh failed: '+e.message,true)}
+  finally{dataRefreshBusy=false;$('refreshdata').disabled=false}
+}
 
 async function saveAll(){
   $('savebtn').disabled=true;
@@ -3021,11 +3039,13 @@ function callPill(a0){
     title="${c.influencer} — target${ts.length>1?'s':''} ${tlabel}${c.stop_loss?', stop-loss '+fmt(parseFloat(c.stop_loss)):' (no stop-loss published)'} (${c.source||'see source'})">
     \u{1F4E3} ${c.influencer.split('(')[0].trim()}: T${tlabel}${c.stop_loss?' / SL'+fmt(parseFloat(c.stop_loss)):''}</span>`}
 function callStatusLabel(s){
+  if(s==='reference')return '≡ Source note';
   if(s==='sl_hit')return '⛔ Stop-loss hit';
   if(s==='open')return '○ Open';
   const n={target1_hit:1,target2_hit:2,target3_hit:3}[s]||1;
   return '\u{1F3AF} T'+n+' hit'}
 function callStatusColour(s){
+  if(s==='reference')return 'var(--muted)';
   return s==='sl_hit'?'var(--crimson)':s==='open'?'var(--muted)':'var(--armed)'}
 // --- Calls: a page of its own ---------------------------------------------
 // Not one of the portfolio analysis tabs. These are other people's public
@@ -3056,6 +3076,7 @@ function showAllInGroup(enc){callGroupAll.add(decodeURIComponent(enc));renderCal
 function jumpToCall(t){callsSearch=t;callsView='all';callsFilterStatus='all';callsLimit=40;renderCalls()}
 function callMatchesFilter(c){
   return callsFilterStatus==='all'?true
+    :callsFilterStatus==='reference'?c.status==='reference'
     :callsFilterStatus==='open'?c.status==='open'
     :callsFilterStatus==='sl'?c.status==='sl_hit'
     :/_hit$/.test(c.status)&&c.status!=='sl_hit'}
@@ -3065,7 +3086,8 @@ const cEsc=s=>String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;')
   .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 const cEnc=s=>encodeURIComponent(s);
 const cShort=n=>String(n||'').replace(/\s*\(.*\)\s*$/,'');
-const pctOf=c=>(c.pct_since_call!=null&&isFinite(parseFloat(c.pct_since_call)))?parseFloat(c.pct_since_call):null;
+const pctOf=c=>c.tracking_mode==='reference'||c.status==='reference'?null
+  :(c.pct_since_call!=null&&isFinite(parseFloat(c.pct_since_call)))?parseFloat(c.pct_since_call):null;
 const isWin=c=>/_hit$/.test(c.status)&&c.status!=='sl_hit';
 const isLoss=c=>c.status==='sl_hit';
 const fmtPct=p=>p==null?'—':(p>=0?'+':'')+p.toFixed(2)+'%';
@@ -3145,6 +3167,7 @@ function callBarHTML(c){
   return `<div class="cv-bar" title="Floor ${fmt(lo)} to first target ${fmt(hi)}">`
     +`<i style="width:${at(px)}%;background:${col}"></i><b style="left:${at(cp)}%"></b></div>`}
 function callRowHTML(c,lead){
+  if(c.source_record_id)return importedCallRowHTML(c,lead);
   const px=c.price!=null?parseFloat(c.price):null;
   const pct=pctOf(c);
   const ts=callTargets(c);
@@ -3168,6 +3191,31 @@ function callRowHTML(c,lead){
     +`<div style="text-align:right"><div style="font-weight:600;color:${pctCol(pct)}">${price}</div>`
     +(pd?`<div class="sub" style="font-size:10.5px">as of ${clockIST(pd)}</div>`:'')+`</div></div>`}
 
+// Imported transcripts keep their literal levels, basket names and strategy
+// visible. Numeric scoring fields must never replace a source's nuanced text.
+function importedCallRowHTML(c,lead){
+  const reference=c.status==='reference'||c.tracking_mode==='reference';
+  const main=lead==='who'?cShort(c.influencer):c.asset_label||c.ticker;
+  const sub=lead==='tickerwho'?cShort(c.influencer):(c.date_added?dayIST(c.date_added):'');
+  const line=(label,value)=>value?`<div style="margin-top:5px"><b>${label}:</b> ${cEsc(value)}</div>`:'';
+  const px=c.price==null?null:parseFloat(c.price),pd=parseIST(c.priced_at);
+  return `<div class="cv-row" style="align-items:start">`
+    +`<div><div class="tk2" style="white-space:normal">${cEsc(main)}</div><div class="sub" style="font-size:10.5px">${cEsc(sub)}</div></div>`
+    +`<div><span class="pill" style="color:${callStatusColour(c.status)};font-size:11px">${callStatusLabel(c.status)}</span></div>`
+    +`<div class="sub cv-lv" style="font-size:11.5px"><b style="color:var(--paper)">${cEsc(c.action||'Published view')}</b>`
+    +line('Entry in CSV',c.entry_text)+line('Targets in CSV',[c.target1_text,c.target2_text,c.target3_text].filter(v=>v&&v!=='-').join(' / '))
+    +line('Risk / support',c.risk_text)+line('Horizon in CSV',c.horizon_text||c.horizon)
+    +(!reference?line('Scoring entry / targets',fmt(parseFloat(c.call_price))+' / '+(callTargets(c).map(t=>fmt(t.v)).join(' / ')||'—')):'')
+    +(c.resolved_date?line('Recorded outcome',callStatusLabel(c.status)+' on '+dayIST(c.resolved_date)+' at '+fmt(parseFloat(c.resolved_price))):'')
+    +`<details style="margin-top:8px"><summary style="font-size:11px">CSV source details · ${cEsc(c.source_timestamp||'')}</summary>`
+    +line('Source',c.source)+line('Category',c.category)+line('Asset / basket',c.asset_label)
+    +line('Tracking',c.tracking_reason)+line('Notes',c.note)
+    +(c.horizon_text&&c.horizon_text!==c.horizon?line('Existing tracked horizon',c.horizon):'')
+    +(c.source_url?`<a href="${cEsc(c.source_url)}" target="_blank" rel="noopener">Original published source</a>`:'')+`</details></div>`
+    +(reference?'<div></div>':callBarHTML(c))
+    +`<div style="text-align:right"><div style="color:${pctCol(pctOf(c))};font-weight:600">${reference?'Not scored':px==null?'Awaiting price':fmt(px)+' ('+fmtPct(pctOf(c))+')'}</div>`
+    +(pd&&!reference?`<div class="sub" style="font-size:10.5px">as of ${dayClockIST(pd)}</div>`:'')+`</div></div>`}
+
 // ---- hero, movers, resolved ----
 function callsFreshnessHTML(){
   let d=parseIST(callsUpdated);
@@ -3188,9 +3236,10 @@ function callChipHTML(c,extra){
     +`<span class="sub">${cEsc(cShort(c.influencer))}</span></span>`}
 function callsHeroHTML(){
   const n=calls.length;
+  const references=calls.filter(c=>c.status==='reference').length;
   const priced=calls.filter(c=>pctOf(c)!=null);
   const total=avgPct(calls);
-  const W=calls.filter(isWin).length,Ls=calls.filter(isLoss).length,O=n-W-Ls;
+  const W=calls.filter(isWin).length,Ls=calls.filter(isLoss).length,O=n-W-Ls-references;
   const analysts=new Set(calls.map(c=>c.influencer||'Unknown')).size;
   const tot=n||1;
   const resolved=W+Ls;
@@ -3198,7 +3247,8 @@ function callsHeroHTML(){
   return `<div class="card" style="padding:20px 22px">`
     +`<div style="display:flex;gap:28px;flex-wrap:wrap;align-items:flex-end;justify-content:space-between">`
     +`<div><div class="sub" style="font-size:11.5px;letter-spacing:.05em">ALL CALLS · ${n} PICKS · ${analysts} ANALYSTS`
-    +`${priced.length<n?' · '+(n-priced.length)+' NOT PRICED YET':''}</div>`
+    +`${priced.length<n-references?' · '+(n-references-priced.length)+' NOT PRICED YET':''}`
+    +`${references?' · '+references+' SOURCE NOTES (NOT SCORED)':''}</div>`
     +`<div style="font-size:46px;font-weight:700;line-height:1.1;margin-top:4px;color:${pctCol(total)}">${fmtPct(total)}</div>`
     +`<div class="sub" style="font-size:12px;margin-top:2px">equal-weighted average move since each call's own entry price</div></div>`
     +`<div style="text-align:right"><div style="font-size:22px;font-weight:700">${resolved?Math.round(W/resolved*100)+'%':'—'}</div>`
@@ -3207,7 +3257,7 @@ function callsHeroHTML(){
     +seg(W,'var(--armed)')+seg(Ls,'var(--crimson)')+seg(O,'var(--muted)')+`</div>`
     +`<div class="sub" style="margin-top:8px;display:flex;gap:16px;flex-wrap:wrap">`
     +`<span style="color:var(--armed)">\u{1F3AF} ${W} target hit</span>`
-    +`<span style="color:var(--crimson)">⛔ ${Ls} stop-loss hit</span><span>○ ${O} open</span></div>`
+    +`<span style="color:var(--crimson)">⛔ ${Ls} stop-loss hit</span><span>○ ${O} open</span>${references?'<span>≡ '+references+' source notes</span>':''}</div>`
     +`<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:12px;font-size:12.5px">`
     +`<span>${callsFreshnessHTML()}</span>`
     +`<button class="small" style="margin-left:auto" onclick="reloadCalls()">↻ Refresh</button></div></div>`}
@@ -3237,7 +3287,7 @@ function callsHighlightsHTML(){
 // anyone with fewer than 3 priced calls is marked "too early", not ranked.
 function callBoard(){
   const by=new Map();
-  calls.forEach(c=>{const k=c.influencer||'Unknown';if(!by.has(k))by.set(k,[]);by.get(k).push(c)});
+  calls.filter(c=>c.status!=='reference').forEach(c=>{const k=c.influencer||'Unknown';if(!by.has(k))by.set(k,[]);by.get(k).push(c)});
   const rows=[...by.entries()].map(([k,m])=>{
     const pr=m.filter(c=>pctOf(c)!=null),n=pr.length;
     const avg=avgPct(m),up=pr.filter(c=>pctOf(c)>0).length;
@@ -3490,7 +3540,7 @@ async function loadHistory(own,rep){
 function callsControlsHTML(){
   const views=[['analyst','By analyst'],['stock','By stock'],['all','All calls']];
   const sorts=[['best','Best first'],['worst','Worst first'],['near','Nearest target'],['new','Newest'],['name','A to Z']];
-  const filters=[['all','All'],['open','○ Open'],['hit','\u{1F3AF} Target hit'],['sl','⛔ Stop-loss hit']];
+  const filters=[['all','All'],['open','○ Open'],['hit','\u{1F3AF} Target hit'],['sl','⛔ Stop-loss hit'],['reference','≡ Source notes']];
   return `<div class="card" style="padding:12px 14px">`
     +`<div class="cv-ctrl" style="margin-bottom:10px">`
     +`<input id="cq" type="search" autocomplete="off" style="flex:1;min-width:200px" value="${cEsc(callsSearch)}"`
@@ -3537,7 +3587,7 @@ function callsAnalystHTML(list){
     const sub=g.members.length+' call'+(g.members.length>1?'s':'')+(g.sebi?' · '+g.sebi:'')
       +(g.sources.length?' · '+g.sources.slice(0,2).join(', ')+(g.sources.length>2?' +'+(g.sources.length-2)+' more':''):'');
     return `<div class="card" style="padding:0;overflow:hidden">`
-      +callGroupHeadHTML(g.k,g.k,sub,g.avg,g.w,g.l,g.members.length-g.w-g.l,open)
+      +callGroupHeadHTML(g.k,g.k,sub,g.avg,g.w,g.l,g.members.filter(c=>c.status==='open').length,open)
       +(open?callGroupRowsHTML(g.k,g.rows,'ticker'):'')+`</div>`}).join('')}
 function callsStockHTML(list){
   const q=callsSearch.trim()!==''||callsFilterStatus!=='all';
@@ -3553,7 +3603,7 @@ function callsStockHTML(list){
     const sub=g.who.length+' analyst'+(g.who.length>1?'s':'')+': '+g.who.slice(0,3).join(', ')
       +(g.who.length>3?' +'+(g.who.length-3)+' more':'');
     return `<div class="card" style="padding:0;overflow:hidden">`
-      +callGroupHeadHTML(key,g.t,sub,g.avg,g.w,g.l,g.rows.length-g.w-g.l,open)
+      +callGroupHeadHTML(key,g.t,sub,g.avg,g.w,g.l,g.rows.filter(c=>c.status==='open').length,open)
       +(open?callGroupRowsHTML(key,g.rows,'who'):'')+`</div>`}).join('');
   if(groups.length>shown.length)
     out+=`<div class="cv-more card" onclick="moreCalls()">Show more stocks (${groups.length-shown.length} left)</div>`;
@@ -3599,7 +3649,7 @@ function stampIST(d){
   return d.toLocaleString('sv-SE',{timeZone:'Asia/Kolkata'}).slice(0,16)}
 function festivalLists(){
   const by=new Map();
-  calls.forEach(c=>{const f=callFestival(c);if(!f)return;
+  calls.forEach(c=>{if(c.status==='reference')return;const f=callFestival(c);if(!f)return;
     if(!by.has(f))by.set(f,[]);by.get(f).push(c)});
   return [...by.entries()].map(([name,rows])=>{
     const pcts=rows.map(pctOf).filter(x=>x!=null);
@@ -3677,7 +3727,7 @@ async function reloadCalls(silent){
     if(callsMode)renderCalls();
     if(!silent)toast('Calls refreshed')
   }catch(e){if(!silent)toast('Could not refresh: '+e.message,true)}}
-setInterval(()=>{if(callsMode&&!document.hidden)reloadCalls(true)},300000);
+setInterval(()=>refreshPublishedData(true),300000);
 let callsDirty=false;
 function addCall(){
   const g=id=>document.getElementById(id).value.trim();
