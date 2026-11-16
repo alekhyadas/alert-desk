@@ -413,6 +413,7 @@
  <div id="callsview" style="display:none"></div>
  <div id="shell">
   <div id="rail">
+  <div id="livebar"></div>
   <div id="digestcard"></div>
   <div id="masthead"></div>
   <div id="perfcard"></div>
@@ -2078,6 +2079,69 @@ function renderAsk(){
             +e.src.map((s,i)=>`<div style="font-size:12px;margin-top:5px"><b>${i+1}</b> <a href="${cEsc(s.link||'#')}" target="_blank" rel="noopener">${cEsc(s.title)}</a> <span class="sub">· ${cEsc(s.source||'')} ${cEsc(s.when||'')}</span></div>`).join('')+`</details>`:'')))
       +`</div>`).join('')}
 
+// ===== Live prices ========================================================
+// live_prices.json is rewritten by the 15-minute alerts job. digest.json is only
+// rebuilt once a day, so without this the portfolio showed yesterday's close all
+// morning. applyLive() lays the latest price over each digest row, and every
+// number derived from price (P&L, day move, distance from highs) follows it.
+let liveData=null, liveBusy=false;
+async function loadLive(){
+  if(!cfg||!cfg.token)return;
+  try{const f=await gh(`/repos/${cfg.owner}/${cfg.repo}/contents/live_prices.json`);
+    liveData=f?JSON.parse(b64dec(f.content)):null}catch(e){}
+  applyLive();updateLiveBar()}
+function applyLive(){
+  if(!liveData||!liveData.prices)return;
+  const r1=v=>Math.round(v*10)/10;
+  Object.values(digestBy||{}).forEach(e=>{
+    const L=liveData.prices[e.ticker];
+    if(!L||!L.p)return;
+    const px=L.p;
+    e.price=px;e.live=true;
+    if(L.c){e.prev_close=L.c;e.day_pct=r1((px/L.c-1)*100)}
+    if(e.year_high)e.off_high_pct=r1((px/Math.max(e.year_high,px)-1)*100);
+    if(e.year_low)e.off_low_pct=r1((px/Math.min(e.year_low,px)-1)*100);
+    if(e.ath)e.off_ath_pct=r1((px/Math.max(e.ath,px)-1)*100);
+    const q=parseFloat(e.qty),inv=parseFloat(e.invested);
+    if(isFinite(q)&&q>0&&isFinite(inv)&&inv>0){
+      e.current=px*q;e.pl_abs=e.current-inv;e.pl_pct=r1((e.current/inv-1)*100)}
+    (e.bands||[]).forEach(b=>{if(b.target){b.away_pct=r1((b.target/px-1)*100)}})})}
+function updateLiveBar(){
+  const box=$('livebar');if(!box)return;
+  if(!cfg||!cfg.token){box.innerHTML='';return}
+  const d=liveData?parseIST(liveData.updated):null;
+  const open=typeof marketOpenNow==='function'&&marketOpenNow();
+  let msg,col;
+  if(!d){msg='No live prices yet, showing the last daily close'+(digestDate?' ('+cEsc(digestDate)+')':'');col='var(--fired)'}
+  else{
+    const mins=(Date.now()-d.getTime())/60000;
+    if(open&&mins>40){msg=`⚠ Prices are ${Math.round(mins)} min old while the market is open (as of ${dayClockIST(d)} IST). The scheduler is behind, press Refresh now.`;col='var(--crimson)'}
+    else if(open){msg=`\u{1F7E2} Live prices as of ${clockIST(d)} IST · ${ago(d)}`;col='var(--armed)'}
+    else{msg=`Market closed · prices as of ${dayClockIST(d)} IST`;col='var(--muted)'}}
+  box.innerHTML=`<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;font-size:12.5px;margin:0 2px 10px">`
+    +`<span style="color:${col}">${msg}</span>`
+    +`<button class="small" style="margin-left:auto" id="livebtn" onclick="checkNow()"${liveBusy?' disabled':''}>${liveBusy?'Checking…':'↻ Refresh now'}</button></div>`}
+async function checkNow(){
+  if(liveBusy||!cfg||!cfg.token)return;
+  liveBusy=true;updateLiveBar();
+  const before=liveData&&liveData.updated;
+  try{
+    const r=await fetch(API+`/repos/${cfg.owner}/${cfg.repo}/actions/workflows/alerts.yml/dispatches`,
+      {method:'POST',headers:hdrs(),body:JSON.stringify({ref:'main',inputs:{force:'yes'}})});
+    if(r.status!==204)throw new Error(r.status===403||r.status===404?'the token needs Actions: Read and write permission':'GitHub said '+r.status);
+    toast('Fresh check started. Prices update in about a minute.');
+    for(let i=0;i<9;i++){
+      await new Promise(ok=>setTimeout(ok,20000));
+      await loadLive();
+      if(liveData&&liveData.updated!==before){if(!dirty)render();break}}
+  }catch(e){toast('Could not start a check: '+e.message,true)}
+  liveBusy=false;updateLiveBar()}
+setInterval(()=>{
+  if(document.hidden||!cfg||!cfg.token||!(typeof marketOpenNow==='function'&&marketOpenNow())||liveBusy)return;
+  loadLive().then(()=>{try{if(!dirty)render()}catch(e){}})},120000);
+document.addEventListener('visibilitychange',()=>{
+  if(!document.hidden&&cfg&&cfg.token)loadLive().then(()=>{try{if(!dirty)render()}catch(e){}})});
+
 function setTab(t){tab=t;render()}
 
 function accountsOf(list){
@@ -2808,6 +2872,7 @@ async function loadAll(){
   }catch(e){}
   await loadHistory(own,rep);
   await loadInsights(own,rep);
+  await loadLive();
   await loadConcalls(own,rep);
   try{
     const cc=await gh(`/repos/${own}/${rep}/contents/influencer_calls.csv`);
@@ -2920,7 +2985,8 @@ function bulkImport(){
 let digestBy={}, digestDate='', digestRaw=null;
 function indexDigest(d){
   digestBy={}; digestRaw=d||null; digestDate=(d&&d.date)||'';
-  ((d&&d.entries)||[]).forEach(e=>{digestBy[e.ticker]=e})}
+  ((d&&d.entries)||[]).forEach(e=>{digestBy[e.ticker]=e});
+  if(typeof applyLive==='function'&&typeof liveData!=='undefined')applyLive()}
 
 function inr(n,dp){return (n<0?'-':'')+'\u20B9'+Math.abs(n).toLocaleString('en-IN',
   {minimumFractionDigits:dp||0,maximumFractionDigits:dp||0})}
