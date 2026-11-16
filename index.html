@@ -2136,9 +2136,20 @@ async function checkNow(){
       if(liveData&&liveData.updated!==before){if(!dirty)render();break}}
   }catch(e){toast('Could not start a check: '+e.message,true)}
   liveBusy=false;updateLiveBar()}
+// While the page is open in market hours, a check that has gone quiet for 20+ minutes is
+// started from here (at most once every 15 minutes), because GitHub's own schedule skips runs.
+function maybeAutoCheck(){
+  const d=liveData?parseIST(liveData.updated):null;
+  if(!d||liveBusy||!(typeof marketOpenNow==='function'&&marketOpenNow()))return;
+  if((Date.now()-d.getTime())/60000<20)return;
+  let last=0;try{last=+localStorage.getItem('alertdesk-autocheck')||0}catch(e){}
+  if(Date.now()-last<15*60000)return;
+  try{localStorage.setItem('alertdesk-autocheck',String(Date.now()))}catch(e){}
+  fetch(API+`/repos/${cfg.owner}/${cfg.repo}/actions/workflows/alerts.yml/dispatches`,
+    {method:'POST',headers:hdrs(),body:JSON.stringify({ref:'main'})}).catch(()=>{})}
 setInterval(()=>{
   if(document.hidden||!cfg||!cfg.token||!(typeof marketOpenNow==='function'&&marketOpenNow())||liveBusy)return;
-  loadLive().then(()=>{try{if(!dirty)render()}catch(e){}})},120000);
+  loadLive().then(()=>{try{if(!dirty)render()}catch(e){};maybeAutoCheck()})},120000);
 document.addEventListener('visibilitychange',()=>{
   if(!document.hidden&&cfg&&cfg.token)loadLive().then(()=>{try{if(!dirty)render()}catch(e){}})});
 
